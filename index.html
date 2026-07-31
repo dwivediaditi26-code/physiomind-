@@ -979,7 +979,7 @@ const titles={dashboard:["Dashboard","Clinic overview at a glance"],reports:["Re
 let current="dashboard";
 function go(v){current=v;document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("active",b.dataset.v===v));document.getElementById("pageTitle").textContent=titles[v][0];document.getElementById("pageSub").textContent=titles[v][1];render();window.scrollTo(0,0);}
 document.getElementById("nav").addEventListener("click",e=>{const b=e.target.closest("button");if(b){go(b.dataset.v);toggleNav(false);}});
-function toggleNav(force){const sb=document.querySelector(".sidebar"),bd=document.getElementById("backdrop");const open=force!==undefined?force:!sb.classList.contains("open");sb.classList.toggle("open",open);bd.classList.toggle("show",open);}
+function toggleNav(force){const sb=document.querySelector(".sidebar"),bd=document.getElementById("backdrop"),bn=document.getElementById("bottomNav");const open=force!==undefined?force:!sb.classList.contains("open");sb.classList.toggle("open",open);bd.classList.toggle("show",open);if(bn)bn.style.display=open?"none":"";}
 function render(){
   // Remember what was focused before the re-render (search boxes trigger render on every keystroke,
   // so without this the input gets destroyed and rebuilt, kicking the mobile keyboard off after 1 letter).
@@ -4558,7 +4558,8 @@ function applyLayoutMode(){
   const bn=document.getElementById("bottomNav");
   const app=document.querySelector(".app");
   const md=document.getElementById("moreDrawer");
-  if(bn)bn.style.removeProperty("display");
+  const sidebarOpen=document.querySelector(".sidebar")?.classList.contains("open");
+  if(bn&&!sidebarOpen)bn.style.removeProperty("display");
   if(app)app.style.removeProperty("padding-bottom");
   if(window.matchMedia("(min-width:641px)").matches&&md)md.classList.remove("open");
 }
