@@ -526,7 +526,7 @@ hr.sep{border:none;border-top:1px solid var(--line);margin:15px 0}
       <button data-v="staff"><span class="ico">👥</span> Staff</button>
       <button data-v="branches"><span class="ico">🏢</span> Branches</button>
       <button data-v="settings"><span class="ico">⚙️</span> Settings</button>
-    <button data-v="audit"><span class="ico">📋</span> Audit Log</button>
+      <button data-v="audit"><span class="ico">📋</span> Audit Log</button>
       <button data-v="help"><span class="ico">❓</span> How to use</button>
     </nav>
     <div class="side-foot" id="sideFoot"></div>
@@ -687,7 +687,7 @@ let DB;
 let CURROLE="owner", MYTHER=null;
 const ROLES={
  owner:{name:"Dr. Neha Verma",title:"Owner / Senior Physiotherapist",init:"NV",color:"#2563eb",home:"dashboard",scope:null,
-   views:["dashboard","reports","patients","appointments","assessment","treatment","packages","billing","expenses","reminders","staff","branches","settings","help"]},
+   views:["dashboard","reports","patients","appointments","assessment","treatment","packages","billing","expenses","reminders","staff","branches","settings","audit","help"]},
  staff:{name:"Dr. Amit Joshi",title:"Therapist & Front Desk",init:"AJ",color:"#0d9488",home:"appointments",scope:"Dr. Amit Joshi",
    views:["dashboard","patients","appointments","assessment","treatment","packages","billing","reminders","help"]}
 };
