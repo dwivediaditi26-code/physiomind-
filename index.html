@@ -460,7 +460,7 @@ hr.sep{border:none;border-top:1px solid var(--line);margin:15px 0}
 /* Mobile-only bottom tab bar. Below 641px it's shown (and .app gets bottom padding to clear it);
    at 641px and above this single rule is the one source of truth that keeps it hidden — no JS
    width-detection needed, so there's nothing for a wrapped/embedded window to get wrong. */
-@media(max-width:640px){.bottom-nav{display:flex!important}.app{padding-bottom:calc(72px + env(safe-area-inset-bottom,0px))}}
+@media(max-width:640px){.bottom-nav{display:flex!important}.app{padding-bottom:calc(72px + env(safe-area-inset-bottom,0px))}.nav{padding-bottom:calc(76px + env(safe-area-inset-bottom,0px))}}
 @media(min-width:641px){.bottom-nav,.more-drawer,#moreBackdrop{display:none!important}.app{padding-bottom:0!important}}
 /* Desktop polish — make use of the extra width instead of just stretching the mobile layout */
 @media(min-width:1300px){
