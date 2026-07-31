@@ -935,6 +935,27 @@ function promptNewModality(selId,taId){
   if(!has)ta.value=(ta.value.trim()?ta.value.replace(/\s+$/,'')+"\n":"")+val;
   toast("💾 Saved \""+val+"\" — it'll show up in the Modalities list for every future patient.",3000);
 }
+function promptNewExercise(regId,exId,taId){
+  const regSel=document.getElementById(regId);
+  const region=regSel?regSel.value:REGIONS[0];
+  const name=prompt("New exercise name to save under \""+region+"\" for reuse with every future patient:");
+  if(!name||!name.trim())return;
+  const val=name.trim();
+  const dose=prompt("Sets × reps / frequency for \""+val+"\" (optional):","3×10");
+  if(dose===null)return; // cancelled
+  DB.exercisePresets=DB.exercisePresets||[];
+  const existing=DB.exercisePresets.find(p=>p.region===region&&p.name.toLowerCase()===val.toLowerCase());
+  if(existing)existing.dose=dose.trim();else DB.exercisePresets.push({id:uid("ep"),region:region,name:val,dose:dose.trim()});
+  save();
+  if(exId)fillEx(regId,exId);
+  const ta=document.getElementById(taId);
+  if(ta){
+    const line=val+(dose.trim()?" — "+dose.trim():"");
+    const has=ta.value.split("\n").map(x=>x.trim()).includes(line);
+    if(!has)ta.value=(ta.value.trim()?ta.value.replace(/\s+$/,'')+"\n":"")+line;
+  }
+  toast("💾 Saved \""+val+"\" under "+region+" — it'll show up in the exercise library for every future patient.",3000);
+}
 
 const pById=id=>DB.patients.find(p=>p.id===id)||{name:"—"};
 function patientCode(p){const base=(p.dob||"").split("-").reverse().join("");if(!base)return(p.id||"").toUpperCase();const same=DB.patients.filter(x=>x.dob===p.dob);if(same.length>1){const idx=same.findIndex(x=>x.id===p.id);return base+"-"+(idx+1);}return base;}
@@ -2098,7 +2119,7 @@ function planForm(id,forcedPid){
  const tex=(t.exercises&&t.exercises.length)?t.exercises:(lastVisit&&lastVisit.exercises&&lastVisit.exercises.length?lastVisit.exercises:[]);
  const thome=t.home||[];
  const regOpts=REGIONS.map(r=>`<option>${r}</option>`).join("");
- const picker=(rid,eid,taid)=>`<div style="display:flex;gap:6px;margin:6px 0"><select id="${rid}" onchange="fillEx('${rid}','${eid}')" style="flex:0 0 135px;padding:8px;border:1px solid var(--line);border-radius:8px">${regOpts}</select><select id="${eid}" style="flex:1;min-width:0;padding:8px;border:1px solid var(--line);border-radius:8px"></select><button type="button" class="btn sm" onclick="addExTo('${eid}','${taid}')">+ Add</button></div>`;
+ const picker=(rid,eid,taid)=>`<div style="display:flex;gap:6px;margin:6px 0"><select id="${rid}" onchange="fillEx('${rid}','${eid}')" style="flex:0 0 135px;padding:8px;border:1px solid var(--line);border-radius:8px">${regOpts}</select><select id="${eid}" style="flex:1;min-width:0;padding:8px;border:1px solid var(--line);border-radius:8px"></select><button type="button" class="btn sm" onclick="addExTo('${eid}','${taid}')">+ Add</button><button type="button" class="btn sm sec" title="Type a new exercise and save it to the library for reuse with every future patient" onclick="promptNewExercise('${rid}','${eid}','${taid}')">💾 New</button></div>`;
  window._hl=JSON.parse(JSON.stringify(t.homeLinks||[]));
  window._planFormId=id||'';
  openModal(`<div class="modal-h"><h3>${id?"Edit":"New"} Treatment Plan</h3><button class="x" onclick="closeModal()">×</button></div>
@@ -3492,7 +3513,7 @@ function assessForm(_,pid){
   <div class="grid2"><div class="field"><label>Short-term goals (2–4 wks)</label><input id="ca_stg" oninput="window._aForm.stg=this.value"></div><div class="field"><label>Long-term goals (discharge)</label><input id="ca_ltg" oninput="window._aForm.ltg=this.value"></div></div>
   <div class="grid2"><div class="field"><label>Total sessions</label><input id="ca_sessions" type="number" min="1" value="12" oninput="window._aForm.sessions=+this.value"></div><div class="field"><label>Sessions / frequency</label><input id="ca_freq" placeholder="e.g. 3×/week × 4 weeks" oninput="window._aForm.freq=this.value"></div></div>
   <div class="field"><label>Modalities / electrotherapy — pick &amp; add (or type below)</label><div style="display:flex;gap:6px;margin:6px 0"><select id="ca_modsel" style="flex:1;min-width:0;padding:8px;border:1px solid var(--line);border-radius:8px">${modOpts()}</select><button type="button" class="btn sm" onclick="addLine('ca_modsel','ca_mods')">+ Add</button><button type="button" class="btn sm sec" title="Type a new modality and save it for reuse with every future patient" onclick="promptNewModality('ca_modsel','ca_mods')">💾 New</button></div><textarea id="ca_mods" rows="2" placeholder="One modality per line"></textarea></div>
-  <div class="field"><label>Clinic exercises — ${EXCOUNT}+ in library, pick region &amp; add (or type below)</label><div style="display:flex;gap:6px;margin:6px 0"><select id="ca_exreg" onchange="fillEx('ca_exreg','ca_exsel')" style="flex:0 0 135px;padding:8px;border:1px solid var(--line);border-radius:8px">${REGIONS.map(r=>`<option>${r}</option>`).join("")}</select><select id="ca_exsel" style="flex:1;min-width:0;padding:8px;border:1px solid var(--line);border-radius:8px"></select><button type="button" class="btn sm" onclick="addExTo('ca_exsel','ca_ex')">+ Add</button></div><textarea id="ca_ex" rows="3" placeholder="One exercise per line"></textarea></div>
+  <div class="field"><label>Clinic exercises — ${EXCOUNT}+ in library, pick region &amp; add (or type below)</label><div style="display:flex;gap:6px;margin:6px 0"><select id="ca_exreg" onchange="fillEx('ca_exreg','ca_exsel')" style="flex:0 0 135px;padding:8px;border:1px solid var(--line);border-radius:8px">${REGIONS.map(r=>`<option>${r}</option>`).join("")}</select><select id="ca_exsel" style="flex:1;min-width:0;padding:8px;border:1px solid var(--line);border-radius:8px"></select><button type="button" class="btn sm" onclick="addExTo('ca_exsel','ca_ex')">+ Add</button><button type="button" class="btn sm sec" title="Type a new exercise and save it to the library for reuse with every future patient" onclick="promptNewExercise('ca_exreg','ca_exsel','ca_ex')">💾 New</button></div><textarea id="ca_ex" rows="3" placeholder="One exercise per line"></textarea></div>
   <div class="field"><label>🏠 Home programme — exercises for patient to do at home</label><div style="display:flex;gap:6px;margin:6px 0"><select id="ca_hreg" onchange="fillEx('ca_hreg','ca_hsel')" style="flex:0 0 135px;padding:8px;border:1px solid var(--line);border-radius:8px">${REGIONS.map(r=>`<option>${r}</option>`).join("")}</select><select id="ca_hsel" style="flex:1;min-width:0;padding:8px;border:1px solid var(--line);border-radius:8px"></select><button type="button" class="btn sm" onclick="addExTo('ca_hsel','ca_home')">+ Add</button></div><textarea id="ca_home" rows="2" placeholder="One exercise per line"></textarea></div>
   <div class="field"><label>📎 Exercise video links <span class="muted" style="font-weight:400;font-size:12px">(optional — shown in Treatment &amp; sent via WhatsApp)</span></label>
    <div id="chLinks_list"></div>
@@ -4296,7 +4317,7 @@ function assessEdit(id){
   <div class="grid2"><div class="field"><label>Short-term goals (2–4 wks)</label><input id="ca_stg" value="${existing.stg||''}" oninput="window._aForm.stg=this.value"></div><div class="field"><label>Long-term goals (discharge)</label><input id="ca_ltg" value="${existing.ltg||''}" oninput="window._aForm.ltg=this.value"></div></div>
   <div class="grid2"><div class="field"><label>Total sessions</label><input id="ca_sessions" type="number" min="1" value="${existing.sessions||12}" oninput="window._aForm.sessions=+this.value"></div><div class="field"><label>Sessions / frequency</label><input id="ca_freq" value="${existing.freq||''}" placeholder="e.g. 3×/week × 4 weeks" oninput="window._aForm.freq=this.value"></div></div>
   <div class="field"><label>Modalities / electrotherapy — pick &amp; add (or type below)</label><div style="display:flex;gap:6px;margin:6px 0"><select id="ca_modsel" style="flex:1;min-width:0;padding:8px;border:1px solid var(--line);border-radius:8px">${modOpts()}</select><button type="button" class="btn sm" onclick="addLine('ca_modsel','ca_mods')">+ Add</button><button type="button" class="btn sm sec" title="Type a new modality and save it for reuse with every future patient" onclick="promptNewModality('ca_modsel','ca_mods')">💾 New</button></div><textarea id="ca_mods" rows="2" placeholder="One modality per line">${(existing.modalities||[]).join("\n")}</textarea></div>
-  <div class="field"><label>Clinic exercises — ${EXCOUNT}+ in library, pick region &amp; add (or type below)</label><div style="display:flex;gap:6px;margin:6px 0"><select id="ca_exreg" onchange="fillEx('ca_exreg','ca_exsel')" style="flex:0 0 135px;padding:8px;border:1px solid var(--line);border-radius:8px">${REGIONS.map(r=>`<option>${r}</option>`).join("")}</select><select id="ca_exsel" style="flex:1;min-width:0;padding:8px;border:1px solid var(--line);border-radius:8px"></select><button type="button" class="btn sm" onclick="addExTo('ca_exsel','ca_ex')">+ Add</button></div><textarea id="ca_ex" rows="3" placeholder="One exercise per line">${(existing.exercises||[]).join("\n")}</textarea></div>
+  <div class="field"><label>Clinic exercises — ${EXCOUNT}+ in library, pick region &amp; add (or type below)</label><div style="display:flex;gap:6px;margin:6px 0"><select id="ca_exreg" onchange="fillEx('ca_exreg','ca_exsel')" style="flex:0 0 135px;padding:8px;border:1px solid var(--line);border-radius:8px">${REGIONS.map(r=>`<option>${r}</option>`).join("")}</select><select id="ca_exsel" style="flex:1;min-width:0;padding:8px;border:1px solid var(--line);border-radius:8px"></select><button type="button" class="btn sm" onclick="addExTo('ca_exsel','ca_ex')">+ Add</button><button type="button" class="btn sm sec" title="Type a new exercise and save it to the library for reuse with every future patient" onclick="promptNewExercise('ca_exreg','ca_exsel','ca_ex')">💾 New</button></div><textarea id="ca_ex" rows="3" placeholder="One exercise per line">${(existing.exercises||[]).join("\n")}</textarea></div>
   <div class="field"><label>🏠 Home programme — exercises for patient to do at home</label><div style="display:flex;gap:6px;margin:6px 0"><select id="ca_hreg" onchange="fillEx('ca_hreg','ca_hsel')" style="flex:0 0 135px;padding:8px;border:1px solid var(--line);border-radius:8px">${REGIONS.map(r=>`<option>${r}</option>`).join("")}</select><select id="ca_hsel" style="flex:1;min-width:0;padding:8px;border:1px solid var(--line);border-radius:8px"></select><button type="button" class="btn sm" onclick="addExTo('ca_hsel','ca_home')">+ Add</button></div><textarea id="ca_home" rows="2" placeholder="One exercise per line">${(existing.home||[]).join("\n")}</textarea></div>
   <div class="field"><label>📎 Exercise video links <span class="muted" style="font-weight:400;font-size:12px">(optional — shown in Treatment &amp; sent via WhatsApp)</span></label>
    <div id="chLinks_list"></div>
