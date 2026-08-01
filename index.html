@@ -964,6 +964,17 @@ const bName=id=>(DB.branches.find(b=>b.id===id)||{name:"—"}).name;
 const initials=n=>n.split(" ").filter(w=>!/^(dr\.?|mr\.?|ms\.?)$/i.test(w)).map(w=>w[0]).slice(0,2).join("").toUpperCase();
 const inr=n=>"₹"+(+n).toLocaleString("en-IN");
 const pdfInr=n=>"Rs. "+(+n).toLocaleString("en-IN"); // jsPDF's built-in fonts can't render ₹, so PDFs use "Rs." instead
+function printHTML(html){
+ const div=document.createElement('div');
+ div.id='print-only-sheet';
+ div.style.cssText='position:fixed;inset:0;z-index:99999;background:#fff;overflow:auto;padding:24px 28px';
+ div.innerHTML=html;
+ document.body.appendChild(div);
+ document.body.querySelectorAll(':scope > *:not(#print-only-sheet)').forEach(el=>el.style.display='none');
+ window.print();
+ document.body.querySelectorAll(':scope > *:not(#print-only-sheet)').forEach(el=>el.style.display='');
+ div.remove();
+}
 const MM=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const MNAMES=["January","February","March","April","May","June","July","August","September","October","November","December"];
 const fmtDate=iso=>{if(!iso)return"—";const[y,m,d]=iso.split("-");return +d+" "+MM[+m-1]+" "+y;};
@@ -2476,7 +2487,7 @@ function doMarkPaid(id){const mode=document.getElementById("mp_mode").value;cons
 function payRemind(id){const i=DB.invoices.find(x=>x.id===id);const p=pById(i.pid);sendWA(i.pid,"Payment",inr(invTotals(i).total)+" due — "+i.id,payMsg(p,inr(invTotals(i).total)+" pending for "+i.id));}
 function viewInvoice(id){const i=DB.invoices.find(x=>x.id===id);const p=pById(i.pid);const t=invTotals(i);
  openModal(`<div class="modal-h"><h3>Invoice — ${i.id}</h3><button class="x" onclick="closeModal()">×</button></div>
- <div class="modal-b"><div class="inv">
+ <div class="modal-b"><div class="inv" id="invPrintArea">
   <div class="inv-h"><div><h2>${DB.settings.clinic}</h2><div class="muted">${bName(i.branch)}</div></div><div style="text-align:right"><b>${i.id}</b><div class="muted">${fmtDate(i.date)}${i.time?' · '+i.time:''}</div><span class="tag ${statusTag(i.status)}">${i.status}</span></div></div>
   <div style="margin:6px 0"><b>Bill to:</b> ${p.name} · ${p.phone}${p.addr?`<br><span class="muted">${p.addr}</span>`:""}</div>
   <div style="overflow-x:auto"><table style="min-width:420px"><thead><tr><th>Description</th><th style="white-space:nowrap">Qty</th><th class="tot" style="white-space:nowrap">Rate</th><th class="tot" style="white-space:nowrap">Amount</th></tr></thead><tbody>
@@ -2488,7 +2499,7 @@ function viewInvoice(id){const i=DB.invoices.find(x=>x.id===id);const p=pById(i.
   <button class="btn danger sec" style="margin-right:auto" onclick="deleteInvoice('${id}')">🗑 Delete</button>
   ${i.status==="Pending"?`<button class="btn sec" onclick="editInvoiceForm('${id}')">✏️ Edit</button>`:""}
   <button class="btn sec" onclick="downloadReceiptPDF('${id}')">📄 Receipt PDF</button>
-  <button class="btn sec" onclick="window.print()">🖨 Print</button>
+  <button class="btn sec" onclick="printHTML(document.getElementById('invPrintArea').outerHTML)">🖨 Print</button>
   <button class="btn" onclick="closeModal()">Close</button>
  </div>`,true);}
 function deleteInvoice(id){if(CURROLE!=='owner'){alert("Only the owner can delete invoices.");return;}if(!confirm("Delete this invoice permanently? This cannot be undone."))return;DB.invoices=DB.invoices.filter(x=>x.id!==id);save();closeModal();render();logAudit("Invoice","Deleted "+id);}
@@ -2564,85 +2575,143 @@ function genStatement(id){
  const box=document.getElementById("st_result");
  if(!from||!to){alert("Pick both From and To dates.");return;}
  if(from>to){alert("From date must be on or before To date.");return;}
- const{p,dates,byDate,grand,paid}=statementData(id,from,to);
+ const{p,dates,byDate}=statementData(id,from,to);
  if(!dates.length){box.innerHTML='<div class="empty" style="padding:16px 0">No billed sessions in this range.</div>';return;}
- const rowsHTML=dates.map(d=>{
-  const dayTotal=byDate[d].reduce((s,i)=>s+invTotals(i).total,0);
-  const items=byDate[d].map(i=>{const t=invTotals(i);const desc=(i.items||[]).map(it=>it.d+(it.qty>1?` (₹${it.rate} × ${it.qty})`:` (₹${it.rate})`)).join(", ");
-   return `<div style="display:flex;justify-content:space-between;gap:8px;font-size:12.5px;padding:2px 0"><span class="muted">${i.id} · ${desc}</span><span style="white-space:nowrap">${inr(t.total)} <span class="tag ${statusTag(i.status)}" style="font-size:10px">${i.status}</span></span></div>`;}).join("");
-  return `<div style="padding:8px 0;border-bottom:1px solid var(--line)"><div style="display:flex;justify-content:space-between;font-weight:700;font-size:13px"><span>${fmtDate(d)}</span><span>${inr(dayTotal)}</span></div>${items}</div>`;}).join("");
- box.innerHTML=`<div style="border:1px solid var(--line);border-radius:10px;padding:12px 14px">${rowsHTML}
-  <div style="display:flex;justify-content:space-between;padding-top:8px;font-weight:800;font-size:14.5px"><span>Grand Total</span><span>${inr(grand)}</span></div>
-  <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted)"><span>Paid</span><span>${inr(paid)}</span></div>
-  <div style="display:flex;justify-content:space-between;font-size:12px;color:${grand-paid>0?'var(--danger)':'var(--ok)'}"><span>Balance due</span><span>${inr(grand-paid)}</span></div>
- </div>
+ let linesHTML="";
+ dates.forEach(d=>{
+  linesHTML+=`<div class="stmt-date-h" style="font-weight:700;font-size:12.5px;margin:8px 0 2px">${fmtDate(d)}</div>`;
+  byDate[d].forEach(i=>{
+   (i.items||[]).forEach(it=>{
+    const amt=(it.qty||1)*(it.rate||0);
+    const desc=(it.d||"")+(it.qty>1?` (₹${it.rate} × ${it.qty})`:"")+` — ${i.id}, ${i.status}`;
+    linesHTML+=`<div class="stmt-line" style="display:flex;gap:6px;align-items:center;padding:4px 0">
+     <input type="text" class="sl-desc" value="${desc.replace(/"/g,"&quot;")}" style="flex:1;border:1px solid var(--line);border-radius:6px;padding:4px 7px;font-size:12px">
+     <input type="number" class="sl-amt" value="${amt}" oninput="stmtRecalc()" style="width:82px;text-align:right;border:1px solid var(--line);border-radius:6px;padding:4px 7px;font-size:12px">
+     <button type="button" onclick="this.closest('.stmt-line').remove();stmtRecalc()" style="border:none;background:none;color:var(--danger);cursor:pointer;font-size:16px;padding:0 3px">✕</button>
+    </div>`;
+   });
+  });
+ });
+ box.innerHTML=`<div class="muted" style="font-size:11.5px;margin-bottom:8px">Edit any line — wording, amount, or remove it — before printing or sending. You can add extra lines too (e.g. a discount).</div>
+ <div id="stmt-lines" style="border:1px solid var(--line);border-radius:10px;padding:10px 12px">${linesHTML}</div>
+ <button type="button" class="btn sm sec" style="margin-top:8px" onclick="addStmtLine()">+ Add line</button>
+ <div style="text-align:right;margin-top:10px;font-weight:800;font-size:15px">Total: <span id="stmt-total">₹0</span></div>
  <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
-  <button class="btn sm sec" onclick="window.print()">🖨 Print</button>
-  <button class="btn sm sec" onclick="downloadStatementPDF('${id}','${from}','${to}')">📄 PDF</button>
-  <button class="btn sm" style="background:#25D366" onclick="sendStatementWA('${id}','${from}','${to}')">📲 WhatsApp</button>
- </div>`;}
-function downloadStatementPDF(id,from,to){
- const{p,dates,byDate,grand,paid}=statementData(id,from,to);
- if(!dates.length){alert("No billed sessions in this range.");return;}
- const jsPDFLib=(window.jspdf&&window.jspdf.jsPDF)||window.jsPDF;if(!jsPDFLib){alert("PDF library not loaded. Refresh the page and try again.");return;}
+  <button class="btn sm sec" onclick="printStatementNow('${id}','${from}','${to}')">🖨 Print</button>
+  <button class="btn sm sec" onclick="downloadStatementPDF('${id}','${from}','${to}')">📄 Download PDF</button>
+  <button class="btn sm" style="background:#25D366" onclick="shareStatementPDF('${id}','${from}','${to}')">📲 Send PDF on WhatsApp</button>
+ </div>`;
+ stmtRecalc();}
+function addStmtLine(){
+ const box=document.getElementById("stmt-lines");if(!box)return;
+ if(!box.querySelector(".stmt-extra-h")){
+  const h=document.createElement("div");
+  h.className="stmt-date-h stmt-extra-h";
+  h.style.cssText="font-weight:700;font-size:12.5px;margin:8px 0 2px";
+  h.textContent="Additional";
+  box.appendChild(h);
+ }
+ const row=document.createElement("div");
+ row.className="stmt-line";
+ row.style.cssText="display:flex;gap:6px;align-items:center;padding:4px 0";
+ row.innerHTML=`<input type="text" class="sl-desc" placeholder="Description (e.g. Discount)" style="flex:1;border:1px solid var(--line);border-radius:6px;padding:4px 7px;font-size:12px">
+  <input type="number" class="sl-amt" value="0" oninput="stmtRecalc()" style="width:82px;text-align:right;border:1px solid var(--line);border-radius:6px;padding:4px 7px;font-size:12px">
+  <button type="button" onclick="this.closest('.stmt-line').remove();stmtRecalc()" style="border:none;background:none;color:var(--danger);cursor:pointer;font-size:16px;padding:0 3px">✕</button>`;
+ box.appendChild(row);
+ stmtRecalc();}
+function stmtRecalc(){
+ const box=document.getElementById("stmt-lines");if(!box)return;
+ let total=0;
+ box.querySelectorAll(".sl-amt").forEach(inp=>{total+=+inp.value||0;});
+ const totEl=document.getElementById("stmt-total");if(totEl)totEl.textContent=inr(total);}
+function readStmtLines(){
+ const box=document.getElementById("stmt-lines");if(!box)return{groups:[],grand:0};
+ const groups=[];let cur=null,grand=0;
+ [...box.children].forEach(el=>{
+  if(el.classList.contains("stmt-date-h")){cur={date:el.textContent,lines:[]};groups.push(cur);return;}
+  if(el.classList.contains("stmt-line")){
+   const desc=el.querySelector(".sl-desc").value;
+   const amt=+el.querySelector(".sl-amt").value||0;
+   grand+=amt;
+   if(!cur){cur={date:"",lines:[]};groups.push(cur);}
+   cur.lines.push({desc,amt});
+  }
+ });
+ return{groups,grand};}
+function buildStatementDoc(pid,from,to){
+ const p=pById(pid);
+ const{groups,grand}=readStmtLines();
+ const jsPDFLib=(window.jspdf&&window.jspdf.jsPDF)||window.jsPDF;if(!jsPDFLib)return null;
  const doc=new jsPDFLib({unit:"mm",format:"a4"});const W=210,M=16;let y=18;
- const cDate=M,cDesc=42,cQty=124,cRate=140,cAmt=W-M;
  function rule(){doc.setDrawColor(200);doc.line(M,y,W-M,y);y+=4;}
- function ensureRoom(rowH){if(y>270){doc.addPage();y=20;tableHeader();}}
- function tableHeader(){
-  doc.setFont("helvetica","bold");doc.setFontSize(9);doc.setTextColor(90);
-  doc.text("Date",cDate,y);doc.text("Description",cDesc,y);doc.text("Qty",cQty,y);doc.text("Rate",cRate,y);doc.text("Amount",cAmt,y,{align:"right"});y+=3;
-  doc.setDrawColor(200);doc.line(M,y,W-M,y);y+=5;doc.setTextColor(0);}
- // Header banner
+ function ensureRoom(){if(y>270){doc.addPage();y=20;}}
  doc.setFillColor(11,27,61);doc.rect(0,0,W,24,'F');
  doc.setTextColor(255,255,255);doc.setFontSize(16);doc.setFont("helvetica","bold");doc.text(DB.settings.clinic||"PhysioMind",M,14);
  doc.setFontSize(9);doc.setFont("helvetica","normal");doc.text("STATEMENT OF ACCOUNT",W-M,14,{align:"right"});
  doc.text(fmtDate(from)+" to "+fmtDate(to),W-M,20,{align:"right"});
  doc.setTextColor(0,0,0);y=32;
- // Bill to
  doc.setFontSize(11);doc.setFont("helvetica","bold");doc.text("Bill to: "+p.name+(p.phone?" · "+p.phone:""),M,y);y+=8;
  rule();
- tableHeader();
- doc.setFont("helvetica","normal");doc.setFontSize(9.5);
- dates.forEach(d=>{
-  byDate[d].forEach(i=>{
-   const t=invTotals(i);
-   (i.items||[]).forEach((it,idx)=>{
-    ensureRoom();
-    doc.setTextColor(0);
-    doc.text(idx===0?fmtDate(d):"",cDate,y);
-    doc.text(String(it.d||""),cDesc,y,{maxWidth:cQty-cDesc-4});
-    doc.text(String(it.qty||1),cQty,y);
-    doc.text(pdfInr(it.rate||0),cRate,y);
-    doc.text(pdfInr((it.qty||1)*(it.rate||0)),cAmt,y,{align:"right"});
-    y+=5.2;
-   });
-   doc.setFontSize(8);doc.setTextColor(130);
-   doc.text(i.id+" · "+i.status,cDesc,y,{maxWidth:cQty-cDesc-4});y+=5;
-   doc.setFontSize(9.5);doc.setTextColor(0);
+ groups.forEach(g=>{
+  ensureRoom();
+  doc.setFont("helvetica","bold");doc.setFontSize(10.5);doc.text(g.date||"Additional",M,y);y+=5.5;
+  doc.setFont("helvetica","normal");doc.setFontSize(9.5);
+  g.lines.forEach(l=>{
+   ensureRoom();
+   doc.text(String(l.desc||""),M+2,y,{maxWidth:W-2*M-40});
+   doc.text(pdfInr(l.amt),W-M,y,{align:"right"});
+   y+=5.2;
   });
+  y+=1;
  });
- y+=1;rule();
- doc.setFont("helvetica","bold");doc.setFontSize(12);doc.text("TOTAL",cDesc,y);doc.text(pdfInr(grand),cAmt,y,{align:"right"});y+=7;
- doc.setFontSize(10);doc.setFont("helvetica","normal");
- doc.text("Paid: "+pdfInr(paid),cDesc,y);doc.text("Balance due: "+pdfInr(grand-paid),cAmt,y,{align:"right"});y+=8;
- doc.setFontSize(8);doc.setTextColor(100);doc.text("Computer-generated statement — "+(DB.settings.clinic||""),M,y);
- doc.save("Statement_"+p.name.replace(/ /g,"_")+"_"+from+"_to_"+to+".pdf");
- logAudit("Statement","PDF generated "+from+" to "+to,p.name);}
-function sendStatementWA(id,from,to){
- const{p,dates,byDate,grand,paid}=statementData(id,from,to);
- if(!dates.length){alert("No billed sessions in this range.");return;}
- const first=p.name.split(" ")[0];
- let msg=`Hi ${first} 👋\n\nHere's your statement from *${DB.settings.clinic}* (${fmtDate(from)} – ${fmtDate(to)}):\n\n`;
- dates.forEach(d=>{
-  const dayTotal=byDate[d].reduce((s,i)=>s+invTotals(i).total,0);
-  msg+=`*${fmtDate(d)}* — ${inr(dayTotal)}\n`;
-  byDate[d].forEach(i=>{const t=invTotals(i);const desc=(i.items||[]).map(it=>it.d+(it.qty>1?` (${inr(it.rate)} x ${it.qty})`:` (${inr(it.rate)})`)).join(", ");
-   msg+=`  • ${desc} — ${inr(t.total)} (${i.status})\n`;});
- });
- msg+=`\n*Grand Total:* ${inr(grand)}\n*Paid:* ${inr(paid)}\n*Balance due:* ${inr(grand-paid)}\n\n— Team ${DB.settings.clinic}`;
- sendWA(id,"Statement","Statement sent",msg);
- logAudit("Statement","Sent via WhatsApp "+from+" to "+to,p.name);}
+ rule();
+ doc.setFont("helvetica","bold");doc.setFontSize(12);doc.text("TOTAL",M,y);doc.text(pdfInr(grand),W-M,y,{align:"right"});y+=8;
+ doc.setFontSize(8);doc.setFont("helvetica","normal");doc.setTextColor(100);doc.text("Computer-generated statement — "+(DB.settings.clinic||""),M,y);
+ return{doc,p,grand};}
+function downloadStatementPDF(id,from,to){
+ const built=buildStatementDoc(id,from,to);
+ if(!built){alert("PDF library not loaded. Refresh the page and try again.");return;}
+ built.doc.save("Statement_"+built.p.name.replace(/ /g,"_")+"_"+from+"_to_"+to+".pdf");
+ logAudit("Statement","PDF downloaded "+from+" to "+to,built.p.name);}
+async function shareStatementPDF(id,from,to){
+ const built=buildStatementDoc(id,from,to);
+ if(!built){alert("PDF library not loaded. Refresh the page and try again.");return;}
+ const filename="Statement_"+built.p.name.replace(/ /g,"_")+"_"+from+"_to_"+to+".pdf";
+ const blob=built.doc.output("blob");
+ const file=new File([blob],filename,{type:"application/pdf"});
+ if(navigator.canShare&&navigator.canShare({files:[file]})){
+  try{
+   await navigator.share({files:[file],title:"Statement — "+built.p.name,text:"Statement from "+(DB.settings.clinic||"")+" ("+fmtDate(from)+" – "+fmtDate(to)+")"});
+   logAudit("Statement","Shared as PDF "+from+" to "+to,built.p.name);
+   return;
+  }catch(e){if(e&&e.name==="AbortError")return;}
+ }
+ built.doc.save(filename);
+ alert("This browser can't attach files straight to WhatsApp. The PDF has been downloaded — open WhatsApp and attach it from Downloads/Files.");
+ sendWA(id,"Statement","PDF downloaded — opened WhatsApp",`Hi ${built.p.name.split(" ")[0]} 👋\n\nSharing your statement from *${DB.settings.clinic}* (${fmtDate(from)} – ${fmtDate(to)}) — please find the attached PDF.`);}
+function printStatementNow(id,from,to){
+ const p=pById(id);
+ const{groups,grand}=readStmtLines();
+ if(!groups.length){alert("Nothing to print.");return;}
+ const rowsHTML=groups.map(g=>`<div style="margin-top:10px"><div style="font-weight:700;font-size:13px">${g.date||"Additional"}</div>
+  ${g.lines.map(l=>`<div style="display:flex;justify-content:space-between;font-size:12.5px;padding:2px 0"><span>${l.desc}</span><span>${inr(l.amt)}</span></div>`).join("")}
+ </div>`).join("");
+ const html=`<div style="max-width:800px;margin:0 auto;font-family:inherit">
+  <div style="background:#0b1b3d;color:#fff;padding:16px 20px;border-radius:8px 8px 0 0;display:flex;justify-content:space-between;align-items:flex-start">
+   <h2 style="margin:0;font-size:20px">${DB.settings.clinic}</h2>
+   <div style="text-align:right;font-size:12px"><div>STATEMENT OF ACCOUNT</div><div>${fmtDate(from)} to ${fmtDate(to)}</div></div>
+  </div>
+  <div style="border:1px solid #e5e7eb;border-top:none;padding:16px 20px;border-radius:0 0 8px 8px">
+   <div style="font-weight:700;margin-bottom:8px">Bill to: ${p.name}${p.phone?" · "+p.phone:""}</div>
+   <hr style="border:none;border-top:1px solid #e5e7eb">
+   ${rowsHTML}
+   <hr style="border:none;border-top:1px solid #e5e7eb;margin-top:12px">
+   <div style="display:flex;justify-content:space-between;font-weight:800;font-size:16px;margin-top:8px"><span>Total</span><span>${inr(grand)}</span></div>
+   <div style="font-size:11px;color:#888;margin-top:16px">Computer-generated statement — ${DB.settings.clinic}</div>
+  </div>
+ </div>`;
+ printHTML(html);
+ logAudit("Statement","Printed "+from+" to "+to,p.name);}
 const INV_SVCS=[
  {d:"Physiotherapy session",r:800},{d:"Post-op rehab session",r:1000},
  {d:"Initial assessment",r:600},{d:"Follow-up consultation",r:400},
