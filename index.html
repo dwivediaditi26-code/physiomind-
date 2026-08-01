@@ -963,6 +963,7 @@ function ageFromDob(dob){if(!dob)return"";const b=new Date(dob),n=new Date(today
 const bName=id=>(DB.branches.find(b=>b.id===id)||{name:"—"}).name;
 const initials=n=>n.split(" ").filter(w=>!/^(dr\.?|mr\.?|ms\.?)$/i.test(w)).map(w=>w[0]).slice(0,2).join("").toUpperCase();
 const inr=n=>"₹"+(+n).toLocaleString("en-IN");
+const pdfInr=n=>"Rs. "+(+n).toLocaleString("en-IN"); // jsPDF's built-in fonts can't render ₹, so PDFs use "Rs." instead
 const MM=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const MNAMES=["January","February","March","April","May","June","July","August","September","October","November","December"];
 const fmtDate=iso=>{if(!iso)return"—";const[y,m,d]=iso.split("-");return +d+" "+MM[+m-1]+" "+y;};
@@ -2393,14 +2394,14 @@ function downloadDayCloseReport(){
  doc.setTextColor(0,0,0);y=30;
  ln("Date: "+fmtDate(todayISO),11,true);rule();
  ln("Collections by mode",12,true);
- ['Cash','UPI','Card','Wallet','Package','Corporate'].forEach(m=>ln(m+":  "+inr(byMode[m]||0),10));
+ ['Cash','UPI','Card','Wallet','Package','Corporate'].forEach(m=>ln(m+":  "+pdfInr(byMode[m]||0),10));
  y+=2;rule();
- ln("Collected today: "+inr(collToday),11,true,[8,120,80]);
- ln("Expenses today: "+inr(expToday),11,true,[180,40,40]);
- ln("Net in hand: "+inr(collToday-expToday),12,true,[11,27,61]);
+ ln("Collected today: "+pdfInr(collToday),11,true,[8,120,80]);
+ ln("Expenses today: "+pdfInr(expToday),11,true,[180,40,40]);
+ ln("Net in hand: "+pdfInr(collToday-expToday),12,true,[11,27,61]);
  rule();
- if(todayInv.length){ln("Invoices today",12,true);todayInv.forEach(i=>{const p=pById(i.pid);ln(i.id+"  ·  "+p.name+"  ·  "+inr(invTotals(i).total)+"  ·  "+i.mode,9.5);});y+=2;}
- if(todayExp.length){rule();ln("Expenses today",12,true);todayExp.forEach(e=>ln(e.cat+(e.note?" — "+e.note:"")+"  ·  "+inr(e.amount),9.5));}
+ if(todayInv.length){ln("Invoices today",12,true);todayInv.forEach(i=>{const p=pById(i.pid);ln(i.id+"  ·  "+p.name+"  ·  "+pdfInr(invTotals(i).total)+"  ·  "+i.mode,9.5);});y+=2;}
+ if(todayExp.length){rule();ln("Expenses today",12,true);todayExp.forEach(e=>ln(e.cat+(e.note?" — "+e.note:"")+"  ·  "+pdfInr(e.amount),9.5));}
  rule();
  ln("Generated "+new Date().toLocaleString("en-IN"),8.5,false,[130,130,130]);
  doc.save("Day_Close_"+todayISO+".pdf");
@@ -2478,8 +2479,8 @@ function viewInvoice(id){const i=DB.invoices.find(x=>x.id===id);const p=pById(i.
  <div class="modal-b"><div class="inv">
   <div class="inv-h"><div><h2>${DB.settings.clinic}</h2><div class="muted">${bName(i.branch)}</div></div><div style="text-align:right"><b>${i.id}</b><div class="muted">${fmtDate(i.date)}${i.time?' · '+i.time:''}</div><span class="tag ${statusTag(i.status)}">${i.status}</span></div></div>
   <div style="margin:6px 0"><b>Bill to:</b> ${p.name} · ${p.phone}${p.addr?`<br><span class="muted">${p.addr}</span>`:""}</div>
-  <table><thead><tr><th>Description</th><th>Qty</th><th class="tot">Rate</th><th class="tot">Amount</th></tr></thead><tbody>
-  ${i.items.map(it=>`<tr><td>${it.d}</td><td>${it.qty}</td><td class="tot">${inr(it.rate)}</td><td class="tot">${inr(it.qty*it.rate)}</td></tr>`).join("")}</tbody></table>
+  <div style="overflow-x:auto"><table style="min-width:420px"><thead><tr><th>Description</th><th style="white-space:nowrap">Qty</th><th class="tot" style="white-space:nowrap">Rate</th><th class="tot" style="white-space:nowrap">Amount</th></tr></thead><tbody>
+  ${i.items.map(it=>`<tr><td>${it.d}${it.qty>1?`<div class="muted" style="font-size:11px">${inr(it.rate)} per session</div>`:""}</td><td>${it.qty}</td><td class="tot" style="white-space:nowrap">${inr(it.rate)}</td><td class="tot" style="white-space:nowrap">${inr(it.qty*it.rate)}</td></tr>`).join("")}</tbody></table></div>
   <div class="tot"><div class="grand"><span>Total</span><span>${inr(t.total)}</span></div>${i.paid&&i.paid<t.total?`<div><span style="color:var(--ok)">Paid</span><span style="color:var(--ok)">${inr(i.paid)}</span></div><div><span style="color:var(--danger)">Balance due</span><span style="color:var(--danger)">${inr(t.total-i.paid)}</span></div>`:""}</div>
   <hr class="sep"><div class="muted" style="font-size:12px">Payment mode: ${i.mode||"—"} ${i.paidAt?"· Paid on "+fmtDate(i.paidAt):""} · ${DB.settings.clinic} · Computer-generated invoice.</div>
  </div></div>
@@ -2530,10 +2531,10 @@ async function downloadReceiptPDF(id){const i=DB.invoices.find(x=>x.id===id);con
  doc.text("Description",M,y);doc.text("Qty",100,y);doc.text("Rate",115,y);doc.text("Amount",W-M,y,{align:"right"});y+=5;
  rule();
  doc.setFont("helvetica","normal");doc.setFontSize(9);
- i.items.forEach(it=>{doc.text(String(it.d||""),M,y,{maxWidth:82});doc.text(String(it.qty||1),100,y);doc.text(inr(it.rate||0),115,y);doc.text(inr((it.qty||1)*(it.rate||0)),W-M,y,{align:"right"});y+=5.5;});
+ i.items.forEach(it=>{doc.text(String(it.d||""),M,y,{maxWidth:82});doc.text(String(it.qty||1),100,y);doc.text(pdfInr(it.rate||0),115,y);doc.text(pdfInr((it.qty||1)*(it.rate||0)),W-M,y,{align:"right"});y+=5.5;});
  rule();
  // Totals
- doc.setFontSize(12);doc.setFont("helvetica","bold");doc.text("TOTAL",100,y);doc.text(inr(t.total),W-M,y,{align:"right"});y+=7;
+ doc.setFontSize(12);doc.setFont("helvetica","bold");doc.text("TOTAL",100,y);doc.text(pdfInr(t.total),W-M,y,{align:"right"});y+=7;
  doc.setFont("helvetica","normal");doc.setFontSize(8);doc.setTextColor(100);
  doc.text("Thank you for choosing "+DB.settings.clinic+". Computer-generated invoice.",M,y,{maxWidth:W-2*M});
  doc.save("Receipt_"+i.id+"_"+p.name.replace(/ /g,"_")+".pdf");}
@@ -2567,7 +2568,7 @@ function genStatement(id){
  if(!dates.length){box.innerHTML='<div class="empty" style="padding:16px 0">No billed sessions in this range.</div>';return;}
  const rowsHTML=dates.map(d=>{
   const dayTotal=byDate[d].reduce((s,i)=>s+invTotals(i).total,0);
-  const items=byDate[d].map(i=>{const t=invTotals(i);const desc=(i.items||[]).map(it=>it.d+(it.qty>1?" ×"+it.qty:"")).join(", ");
+  const items=byDate[d].map(i=>{const t=invTotals(i);const desc=(i.items||[]).map(it=>it.d+(it.qty>1?` (₹${it.rate} × ${it.qty})`:` (₹${it.rate})`)).join(", ");
    return `<div style="display:flex;justify-content:space-between;gap:8px;font-size:12.5px;padding:2px 0"><span class="muted">${i.id} · ${desc}</span><span style="white-space:nowrap">${inr(t.total)} <span class="tag ${statusTag(i.status)}" style="font-size:10px">${i.status}</span></span></div>`;}).join("");
   return `<div style="padding:8px 0;border-bottom:1px solid var(--line)"><div style="display:flex;justify-content:space-between;font-weight:700;font-size:13px"><span>${fmtDate(d)}</span><span>${inr(dayTotal)}</span></div>${items}</div>`;}).join("");
  box.innerHTML=`<div style="border:1px solid var(--line);border-radius:10px;padding:12px 14px">${rowsHTML}
@@ -2585,31 +2586,46 @@ function downloadStatementPDF(id,from,to){
  if(!dates.length){alert("No billed sessions in this range.");return;}
  const jsPDFLib=(window.jspdf&&window.jspdf.jsPDF)||window.jsPDF;if(!jsPDFLib){alert("PDF library not loaded. Refresh the page and try again.");return;}
  const doc=new jsPDFLib({unit:"mm",format:"a4"});const W=210,M=16;let y=18;
+ const cDate=M,cDesc=42,cQty=124,cRate=140,cAmt=W-M;
  function rule(){doc.setDrawColor(200);doc.line(M,y,W-M,y);y+=4;}
+ function ensureRoom(rowH){if(y>270){doc.addPage();y=20;tableHeader();}}
+ function tableHeader(){
+  doc.setFont("helvetica","bold");doc.setFontSize(9);doc.setTextColor(90);
+  doc.text("Date",cDate,y);doc.text("Description",cDesc,y);doc.text("Qty",cQty,y);doc.text("Rate",cRate,y);doc.text("Amount",cAmt,y,{align:"right"});y+=3;
+  doc.setDrawColor(200);doc.line(M,y,W-M,y);y+=5;doc.setTextColor(0);}
+ // Header banner
  doc.setFillColor(11,27,61);doc.rect(0,0,W,24,'F');
  doc.setTextColor(255,255,255);doc.setFontSize(16);doc.setFont("helvetica","bold");doc.text(DB.settings.clinic||"PhysioMind",M,14);
  doc.setFontSize(9);doc.setFont("helvetica","normal");doc.text("STATEMENT OF ACCOUNT",W-M,14,{align:"right"});
  doc.text(fmtDate(from)+" to "+fmtDate(to),W-M,20,{align:"right"});
  doc.setTextColor(0,0,0);y=32;
- doc.setFontSize(11);doc.setFont("helvetica","bold");doc.text("Patient: "+p.name,M,y);y+=5.5;
- doc.setFont("helvetica","normal");doc.setFontSize(10);doc.text(p.phone||" ",M,y);y+=8;
+ // Bill to
+ doc.setFontSize(11);doc.setFont("helvetica","bold");doc.text("Bill to: "+p.name+(p.phone?" · "+p.phone:""),M,y);y+=8;
  rule();
+ tableHeader();
+ doc.setFont("helvetica","normal");doc.setFontSize(9.5);
  dates.forEach(d=>{
-  const dayTotal=byDate[d].reduce((s,i)=>s+invTotals(i).total,0);
-  if(y>265){doc.addPage();y=18;}
-  doc.setFont("helvetica","bold");doc.setFontSize(10.5);doc.setTextColor(0);
-  doc.text(fmtDate(d),M,y);doc.text(inr(dayTotal),W-M,y,{align:"right"});y+=5.5;
-  doc.setFont("helvetica","normal");doc.setFontSize(9);doc.setTextColor(90);
   byDate[d].forEach(i=>{
-   if(y>270){doc.addPage();y=18;}
-   const t=invTotals(i);const desc=(i.items||[]).map(it=>it.d+(it.qty>1?" x"+it.qty:"")).join(", ");
-   doc.text(i.id+" · "+desc+" · "+i.status,M+2,y,{maxWidth:W-2*M-30});
-   doc.text(inr(t.total),W-M,y,{align:"right"});y+=5;});
-  doc.setTextColor(0);y+=2;});
- rule();
- doc.setFont("helvetica","bold");doc.setFontSize(12);doc.text("GRAND TOTAL",M,y);doc.text(inr(grand),W-M,y,{align:"right"});y+=6;
+   const t=invTotals(i);
+   (i.items||[]).forEach((it,idx)=>{
+    ensureRoom();
+    doc.setTextColor(0);
+    doc.text(idx===0?fmtDate(d):"",cDate,y);
+    doc.text(String(it.d||""),cDesc,y,{maxWidth:cQty-cDesc-4});
+    doc.text(String(it.qty||1),cQty,y);
+    doc.text(pdfInr(it.rate||0),cRate,y);
+    doc.text(pdfInr((it.qty||1)*(it.rate||0)),cAmt,y,{align:"right"});
+    y+=5.2;
+   });
+   doc.setFontSize(8);doc.setTextColor(130);
+   doc.text(i.id+" · "+i.status,cDesc,y,{maxWidth:cQty-cDesc-4});y+=5;
+   doc.setFontSize(9.5);doc.setTextColor(0);
+  });
+ });
+ y+=1;rule();
+ doc.setFont("helvetica","bold");doc.setFontSize(12);doc.text("TOTAL",cDesc,y);doc.text(pdfInr(grand),cAmt,y,{align:"right"});y+=7;
  doc.setFontSize(10);doc.setFont("helvetica","normal");
- doc.text("Paid: "+inr(paid),M,y);doc.text("Balance due: "+inr(grand-paid),W-M,y,{align:"right"});y+=8;
+ doc.text("Paid: "+pdfInr(paid),cDesc,y);doc.text("Balance due: "+pdfInr(grand-paid),cAmt,y,{align:"right"});y+=8;
  doc.setFontSize(8);doc.setTextColor(100);doc.text("Computer-generated statement — "+(DB.settings.clinic||""),M,y);
  doc.save("Statement_"+p.name.replace(/ /g,"_")+"_"+from+"_to_"+to+".pdf");
  logAudit("Statement","PDF generated "+from+" to "+to,p.name);}
@@ -2621,7 +2637,7 @@ function sendStatementWA(id,from,to){
  dates.forEach(d=>{
   const dayTotal=byDate[d].reduce((s,i)=>s+invTotals(i).total,0);
   msg+=`*${fmtDate(d)}* — ${inr(dayTotal)}\n`;
-  byDate[d].forEach(i=>{const t=invTotals(i);const desc=(i.items||[]).map(it=>it.d+(it.qty>1?" x"+it.qty:"")).join(", ");
+  byDate[d].forEach(i=>{const t=invTotals(i);const desc=(i.items||[]).map(it=>it.d+(it.qty>1?` (${inr(it.rate)} x ${it.qty})`:` (${inr(it.rate)})`)).join(", ");
    msg+=`  • ${desc} — ${inr(t.total)} (${i.status})\n`;});
  });
  msg+=`\n*Grand Total:* ${inr(grand)}\n*Paid:* ${inr(paid)}\n*Balance due:* ${inr(grand-paid)}\n\n— Team ${DB.settings.clinic}`;
