@@ -11,6 +11,11 @@
 -- block at the bottom once, per clinic.
 -- ═══════════════════════════════════════════════════════════════
 
+-- Wrapped in a transaction: if ANY statement below fails, everything in
+-- this file rolls back together — no partial state to clean up before
+-- retrying, unlike what happened on the first run before this fix.
+begin;
+
 -- ── 1. Permission catalog ─────────────────────────────────────
 -- Fixed vocabulary the app understands. Add a row here whenever a
 -- new feature needs its own on/off switch in the permissions matrix.
@@ -54,6 +59,16 @@ create table if not exists roles (
 );
 alter table roles enable row level security;
 
+-- profiles.role_id replaces the old fixed-enum `role` text column as the
+-- source of truth. `role` stays (nullable-in-spirit, still NOT NULL for
+-- now) for backward compat with anything still reading it directly —
+-- drop it once every code path is confirmed to use role_id/has_permission().
+-- Must come BEFORE has_permission() below — it's a `language sql` function,
+-- and Postgres validates column references in those at CREATE time, not
+-- just on first call. Defining it before this column existed is exactly
+-- what caused "column p.role_id does not exist" on the first run of this file.
+alter table profiles add column if not exists role_id uuid references roles(id);
+
 create or replace function has_permission(perm text)
 returns boolean
 language sql stable security definer set search_path = public
@@ -65,12 +80,6 @@ as $$
     false
   )
 $$;
-
--- profiles.role_id replaces the old fixed-enum `role` text column as the
--- source of truth. `role` stays (nullable-in-spirit, still NOT NULL for
--- now) for backward compat with anything still reading it directly —
--- drop it once every code path is confirmed to use role_id/has_permission().
-alter table profiles add column if not exists role_id uuid references roles(id);
 
 -- Owner-role protections: never let a clinic lock itself out.
 create or replace function protect_owner_role()
@@ -231,15 +240,14 @@ create table if not exists assessments (
   id text primary key default gen_random_uuid()::text,
   clinic_id uuid not null references clinics(id) on delete cascade,
   patient_id text references patients(id) on delete cascade,
-  date date, therapist text, mode text, complaint text, onset text, painsite text, pain int,
-  aggr text, reliev text, history text,
-  regions jsonb default '[]'::jsonb, region_sides jsonb default '{}'::jsonb, obs jsonb default '{}'::jsonb,
-  palp jsonb default '{}'::jsonb, neuro jsonb default '{}'::jsonb, rom jsonb default '{}'::jsonb,
-  mmt jsonb default '{}'::jsonb, tests jsonb default '{}'::jsonb, func jsonb default '[]'::jsonb,
-  func_other text, posture text, gait text, swelling text, neuro_note text,
-  assessment_text text, dx text, problem text, stg text, ltg text, sessions int, freq text,
-  modalities jsonb default '[]'::jsonb, exercises jsonb default '[]'::jsonb, home jsonb default '[]'::jsonb,
-  home_freq text, advice text, rx jsonb default '[]'::jsonb
+  date date, therapist text, dx text,
+  -- Same reasoning as consultations: the assessment form builds up a much
+  -- richer object than first assumed (regions/obs/palp/neuro/rom/mmt/tests,
+  -- homeLinks, assessFile/assessFilePath for the upload-mode scan, etc.) —
+  -- date/therapist/dx stay real columns since the assessment list sorts and
+  -- displays by them; everything else lives in `data` so nothing gets
+  -- silently dropped.
+  data jsonb not null default '{}'::jsonb
 );
 alter table assessments enable row level security;
 create policy "assessments: view" on assessments for select using (clinic_id = my_clinic_id() and has_permission('clinical.view'));
@@ -506,13 +514,8 @@ begin
       select c.id, (patient_map->>(x->>'pid')), nullif(x->>'date','')::date, x->>'therapist', x->>'dx', (x - 'id' - 'pid' - 'date' - 'therapist' - 'dx')
       from jsonb_array_elements(coalesce(blob->'consultations','[]'::jsonb)) x;
 
-    insert into assessments(clinic_id,patient_id,date,therapist,mode,complaint,onset,painsite,pain,aggr,reliev,history,regions,region_sides,obs,palp,neuro,rom,mmt,tests,func,func_other,posture,gait,swelling,neuro_note,assessment_text,dx,problem,stg,ltg,sessions,freq,modalities,exercises,home,home_freq,advice,rx)
-      select c.id, (patient_map->>(x->>'pid')), nullif(x->>'date','')::date, x->>'therapist', x->>'mode', x->>'complaint', x->>'onset', x->>'painsite',
-        nullif(x->>'pain','')::int, x->>'aggr', x->>'reliev', x->>'history', coalesce(x->'regions','[]'::jsonb), coalesce(x->'regionSides','{}'::jsonb),
-        coalesce(x->'obs','{}'::jsonb), coalesce(x->'palp','{}'::jsonb), coalesce(x->'neuro','{}'::jsonb), coalesce(x->'rom','{}'::jsonb),
-        coalesce(x->'mmt','{}'::jsonb), coalesce(x->'tests','{}'::jsonb), coalesce(x->'func','[]'::jsonb), x->>'funcOther', x->>'posture', x->>'gait',
-        x->>'swelling', x->>'neuroNote', x->>'assessment', x->>'dx', x->>'problem', x->>'stg', x->>'ltg', nullif(x->>'sessions','')::int, x->>'freq',
-        coalesce(x->'modalities','[]'::jsonb), coalesce(x->'exercises','[]'::jsonb), coalesce(x->'home','[]'::jsonb), x->>'homeFreq', x->>'advice', coalesce(x->'rx','[]'::jsonb)
+    insert into assessments(clinic_id,patient_id,date,therapist,dx,data)
+      select c.id, (patient_map->>(x->>'pid')), nullif(x->>'date','')::date, x->>'therapist', x->>'dx', (x - 'id' - 'pid' - 'date' - 'therapist' - 'dx')
       from jsonb_array_elements(coalesce(blob->'assessments','[]'::jsonb)) x;
 
     insert into treatment_plans(clinic_id,patient_id,diagnosis,goal,sessions,done,modalities,exercises,home,home_freq,notes,home_links,visits)
@@ -574,3 +577,5 @@ begin
       on conflict do nothing;
   end loop;
 end $$;
+
+commit;

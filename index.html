@@ -1484,6 +1484,77 @@ async function startCheckout(){
  });
  rzp.open();
 }
+// ── Assessments & Treatment Plans DAL ─────────────────────────────────
+// Assessments: same jsonb-catchall reasoning as consultations/invoices —
+// update() takes the whole current object since save/edit already rebuilds
+// it in full, not a partial patch.
+const ASSESS_NAMED_FIELDS=['id','pid','date','therapist','dx'];
+function fromDbAssess(r){return {id:r.id,pid:r.patient_id,date:r.date,therapist:r.therapist,dx:r.dx,...(r.data||{})};}
+function toDbAssess(a){
+ const data={};
+ for(const k in a){if(!ASSESS_NAMED_FIELDS.includes(k))data[k]=a[k];}
+ return {date:a.date||null,therapist:a.therapist||null,dx:a.dx||null,data};
+}
+const Assessments={
+ async list(){
+  const {data,error}=await sb.from('assessments').select('*').eq('clinic_id',CLINIC_ID).order('date',{ascending:false});
+  if(error)throw error;
+  return (data||[]).map(fromDbAssess);
+ },
+ async create(a){
+  const {data,error}=await sb.from('assessments').insert({id:a.id,clinic_id:CLINIC_ID,patient_id:a.pid,...toDbAssess(a)}).select().single();
+  if(error){toast('⚠️ Could not save assessment: '+error.message,4000);return null;}
+  return fromDbAssess(data);
+ },
+ async update(id,fullAssess){
+  const {error}=await sb.from('assessments').update(toDbAssess(fullAssess)).eq('id',id);
+  if(error)toast('⚠️ Could not update assessment: '+error.message,4000);
+ },
+ async remove(id){
+  const {error}=await sb.from('assessments').delete().eq('id',id);
+  if(error)toast('⚠️ Could not delete assessment: '+error.message,4000);
+ }
+};
+// Treatment plans: stable, well-understood shape (confirmed against every
+// real call site) — a normal named field-map, like patients/appointments.
+const PLAN_FIELD_MAP={diagnosis:'diagnosis',goal:'goal',sessions:'sessions',done:'done',modalities:'modalities',exercises:'exercises',home:'home',homeFreq:'home_freq',notes:'notes',homeLinks:'home_links',visits:'visits'};
+function planPatchToDb(patch){
+ const out={};
+ for(const k in PLAN_FIELD_MAP){if(Object.prototype.hasOwnProperty.call(patch,k))out[PLAN_FIELD_MAP[k]]=patch[k];}
+ return out;
+}
+function fromDbPlan(r){return {id:r.id,pid:r.patient_id,diagnosis:r.diagnosis,goal:r.goal,sessions:r.sessions,done:r.done||0,modalities:r.modalities||[],exercises:r.exercises||[],home:r.home||[],homeFreq:r.home_freq,notes:r.notes,homeLinks:r.home_links||[],visits:r.visits||[]};}
+const TreatmentPlans={
+ async list(){
+  const {data,error}=await sb.from('treatment_plans').select('*').eq('clinic_id',CLINIC_ID);
+  if(error)throw error;
+  return (data||[]).map(fromDbPlan);
+ },
+ async create(t){
+  const {data,error}=await sb.from('treatment_plans').insert({id:t.id,clinic_id:CLINIC_ID,patient_id:t.pid,...planPatchToDb(t)}).select().single();
+  if(error){toast('⚠️ Could not save treatment plan: '+error.message,4000);return null;}
+  return fromDbPlan(data);
+ },
+ async update(id,patch){
+  const {error}=await sb.from('treatment_plans').update(planPatchToDb(patch)).eq('id',id);
+  if(error)toast('⚠️ Could not update treatment plan: '+error.message,4000);
+ },
+ async remove(id){
+  const {error}=await sb.from('treatment_plans').delete().eq('id',id);
+  if(error)toast('⚠️ Could not delete treatment plan: '+error.message,4000);
+ }
+};
+async function loadAssessmentsAndPlans(){
+ try{
+  const [assessments,plans]=await Promise.all([Assessments.list(),TreatmentPlans.list()]);
+  DB.assessments=assessments;
+  DB.plans=plans;
+ }catch(e){
+  console.warn('assessments/treatment_plans tables not available yet — using clinic_data blob fallback',e);
+  if(!DB.assessments)DB.assessments=[];
+  if(!DB.plans)DB.plans=[];
+ }
+}
 async function sbLoadData(){
  const {data,error}=await sb.from('clinic_data').select('data,updated_at').eq('clinic_id',CLINIC_ID).maybeSingle();
  if(error){alert("Could not load your data from Supabase:\n\n"+error.message+"\n\nCheck your internet connection, then refresh the page.");DB=JSON.parse(JSON.stringify(seed));return;}
@@ -1521,6 +1592,7 @@ async function sbLoadData(){
  await loadPackagesAndTemplates();
  await loadStaffAttendanceReminders();
  await loadAuditLog();
+ await loadAssessmentsAndPlans();
 }
 let _sbSaving=false,_sbQueued=false,_lastIdbSnap=0;
 async function sbSaveData(){
@@ -1534,7 +1606,12 @@ async function sbSaveData(){
  // loadAppointments/loadInvoices/loadPackagesAndTemplates/
  // loadStaffAttendanceReminders/loadAuditLog) — excluded here so the blob
  // doesn't carry a stale second copy of them.
- const {patients,branches,consultations,expenses,appointments,invoices,pkgTemplates,patientPkgs,staff,attendance,reminders,auditLog,...blobData}=DB;
+ // patients/branches/consultations/expenses/appointments/invoices/pkgTemplates/
+ // patientPkgs/staff/attendance/reminders/auditLog/assessments/plans live in
+ // their own tables now — excluded here so the blob doesn't carry a stale
+ // second copy of them. This is the last resource pair; every table that
+ // started in this blob has now moved out of it.
+ const {patients,branches,consultations,expenses,appointments,invoices,pkgTemplates,patientPkgs,staff,attendance,reminders,auditLog,assessments,plans,...blobData}=DB;
  const {error}=await sb.from('clinic_data').upsert({clinic_id:CLINIC_ID,data:blobData,updated_at:ts});
  _sbSaving=false;
  if(error){toast("⚠️ Sync failed — check your connection. Retrying…",4000);setTimeout(sbSaveData,3000);return false;}
@@ -3041,7 +3118,7 @@ views.treatment=function(){
  html+='</div></div>';
  return html;
 };
-function delSession(planId,sid){if(!canDo('records.delete')){alert("Only the owner can delete sessions.");return;}if(!confirm("Remove this session entry?"))return;const t=DB.plans.find(x=>x.id===planId);t.visits=(t.visits||[]).filter(s=>s.id!==sid);if(t.done>0)t.done--;var _p=pById(t.pid);logAudit("Treatment session","Deleted session entry",_p?_p.name:"");save();render();}
+function delSession(planId,sid){if(!canDo('records.delete')){alert("Only the owner can delete sessions.");return;}if(!confirm("Remove this session entry?"))return;const t=DB.plans.find(x=>x.id===planId);t.visits=(t.visits||[]).filter(s=>s.id!==sid);if(t.done>0)t.done--;TreatmentPlans.update(planId,{visits:t.visits,done:t.done});var _p=pById(t.pid);logAudit("Treatment session","Deleted session entry",_p?_p.name:"");save();render();}
 function delPlan(planId){
   if(!canDo('records.delete')){alert("Only the owner can delete treatment plans.");return;}
   const t=DB.plans.find(x=>x.id===planId);if(!t)return;
@@ -3050,6 +3127,7 @@ function delPlan(planId){
   if(!confirm("Delete this treatment plan for "+pname+"?\n\n"+sessionCount+" logged session(s) will also be removed. This cannot be undone."))return;
   if(!confirm("Are you absolutely sure? Tap OK to confirm permanent deletion."))return;
   DB.plans=DB.plans.filter(x=>x.id!==planId);
+  TreatmentPlans.remove(planId);
   logAudit("Treatment plan","Deleted plan ("+sessionCount+" sessions)",pname);
   save();render();toast("✓ Treatment plan deleted");
 }
@@ -3250,6 +3328,7 @@ function saveSession(planId,sid,n){const v=k=>{const el=document.getElementById(
  const rec={id:sid||uid("se"),n,date:v("s_date"),time:sid?(t.visits.find(x=>x.id===sid)||{}).time||nowTime():nowTime(),therapist:v("s_ther"),modalities:v("s_mod").split("\n").filter(x=>x.trim()),exercises:v("s_ex").split("\n").filter(x=>x.trim()),pain:v("s_pain"),note:v("s_note")};
  if(sid){const i=t.visits.findIndex(x=>x.id===sid);t.visits[i]=rec;}
  else{rec.paid=false;t.visits.push(rec);t.done=(t.done||0)+1;}
+ TreatmentPlans.update(planId,{visits:t.visits,done:t.done});
  const _pn=(pById(t.pid)||{}).name||'';
  logAudit("Treatment session",(sid?"Edited":"Logged")+" session #"+n+" ("+t.diagnosis+")",_pn);
  save();closeModal();render();}
@@ -3345,13 +3424,14 @@ function savePlan(id){const v=k=>document.getElementById(k).value;
    modalities:mods,exercises:v("t_ex").split("\n").filter(x=>x.trim()),home:v("t_home").split("\n").filter(x=>x.trim()),homeFreq:v("t_homefreq"),homeLinks:(window._hl||[]).filter(l=>l.name||l.link),notes:v("t_notes")};
  if(id){
   Object.assign(DB.plans.find(x=>x.id===id),obj);
+  TreatmentPlans.update(id,obj);
   const prog=document.getElementById("t_progress")?document.getElementById("t_progress").value.trim():"";
   const pain=document.getElementById("t_pain")?document.getElementById("t_pain").value:"";
   if(prog||pain){
    if(!DB.visitNotes)DB.visitNotes=[];
    DB.visitNotes.push({id:uid("vn"),planId:id,pid:obj.pid,date:todayISO,pain:pain,note:prog,by:CURNAME||CURROLE});
   }
- }else{DB.plans.push({id:uid("t"),...obj});}save();closeModal();render();}
+ }else{const _nt={id:uid("t"),...obj};DB.plans.push(_nt);TreatmentPlans.create(_nt);}save();closeModal();render();}
 function pullFromAssessment(){
  const pidEl=document.getElementById("t_pid");if(!pidEl)return;
  const pid=pidEl.value;
@@ -5417,7 +5497,7 @@ function saveAssess(){
   if(!a.pid){alert("Select a patient.");return;}
   const idx=DB.assessments.findIndex(x=>x.id===a.id);
   const isEdit=idx>-1;
-  if(isEdit)DB.assessments[idx]=a; else DB.assessments.push(a);
+  if(isEdit){DB.assessments[idx]=a;Assessments.update(a.id,a);} else {DB.assessments.push(a);Assessments.create(a);}
   const _pn=(pById(a.pid)||{}).name||'';
   logAudit("Assessment",(isEdit?"Edited assessment":"New assessment")+(a.dx?" — "+a.dx:""),_pn);
   save();closeModal();toast("✓ Assessment saved");
@@ -5926,6 +6006,7 @@ function delAssess(id){
   // Remove from patient's docs list too
   if(p&&p.docs){p.docs=p.docs.filter(d=>d.assessId!==id);}
   DB.assessments=(DB.assessments||[]).filter(x=>x.id!==id);
+  Assessments.remove(id);
   logAudit("Assessment","Deleted assessment",pname);
   save();
   current="assessment";
@@ -5990,7 +6071,7 @@ function startSessionFromAssess(id){
   // Check if a treatment plan already exists for this patient with same diagnosis
   let plan=DB.plans.find(t=>t.pid===c.pid&&t.diagnosis===c.dx&&t.done<t.sessions);
   if(plan&&c.homeLinks&&c.homeLinks.length&&(!plan.homeLinks||!plan.homeLinks.length)){
-    plan.homeLinks=c.homeLinks;save();
+    plan.homeLinks=c.homeLinks;TreatmentPlans.update(plan.id,{homeLinks:plan.homeLinks});save();
   }
   if(!plan){
     // Create a new plan seeded from the assessment
@@ -6011,6 +6092,7 @@ function startSessionFromAssess(id){
     };
     if(!DB.plans)DB.plans=[];
     DB.plans.push(plan);
+    TreatmentPlans.create(plan);
     save();
   }
   // Navigate to Treatment tab and open session log
