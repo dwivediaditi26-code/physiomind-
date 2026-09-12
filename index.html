@@ -655,7 +655,17 @@ const SUPABASE_ANON_KEY = "sb_publishable_it_ux50Ko73gDiGl4pPKHQ_5jmZiatb";
 // see the Settings → "Google Drive auto-backup" section for the walkthrough. Leave the
 // placeholder as-is until then; the Connect button will just show a setup message.
 const GOOGLE_CLIENT_ID = "691033574851-2vrmu1bo8loscn5r60mtt2c61f30esut.apps.googleusercontent.com";
-const sb = (SUPABASE_URL.indexOf("PASTE_")===-1) ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+// Guarded: if the Supabase SDK's CDN script failed to load (offline, blocked, ad-blocker),
+// window.supabase is undefined and createClient() would throw here — a `const sb = ...` throwing
+// at the top level leaves `sb` uninitialized, so every later `if(!sb)` fallback check throughout
+// the app throws a ReferenceError instead of degrading gracefully. Catch it so sb is reliably
+// either a real client or null.
+let sb=null;
+try{
+ if(SUPABASE_URL.indexOf("PASTE_")===-1) sb=window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+}catch(e){
+ console.error("Couldn't initialize Supabase — check your internet connection.",e);
+}
 // ══ ERROR MONITORING — paste your own Sentry DSN here ══
 // Free account at sentry.io → New Project (choose "Browser JavaScript") → Settings →
 // Client Keys (DSN) → copy the DSN string. Leave the placeholder as-is to run without
@@ -942,7 +952,7 @@ async function sbSignUp(){
 // when creating each login in Supabase — never chosen by the person signing in.
 async function sbSignIn(){
  const errEl=document.getElementById('demoPassErr');const btn=document.getElementById('loginBtn');
- if(!sb){errEl.textContent="Supabase isn't configured.";errEl.style.display='block';return;}
+ if(!sb){errEl.textContent="Can't reach the server — check your internet connection and reload the page.";errEl.style.display='block';return;}
  const email=(document.getElementById('loginEmail').value||'').trim();
  const pass=document.getElementById('loginPassInput').value;
  errEl.style.display='none';btn.disabled=true;btn.textContent='Signing in…';
@@ -1449,7 +1459,6 @@ async function loadSubscriptionStatus(){
   CLINIC_SUBSCRIPTION=null;
  }
 }
-function daysLeft(iso){if(!iso)return null;return Math.ceil((new Date(iso).getTime()-Date.now())/86400000);}
 function applyBillingGate(){
  const overlay=document.getElementById('billingLock');
  if(!overlay)return;
@@ -1459,7 +1468,7 @@ function applyBillingGate(){
  const locked=!(s.status==='trialing'||s.status==='active'||graceOk);
  if(!locked){
   overlay.style.display='none';
-  if(s.status==='trialing')showTrialBanner(daysLeft(s.current_period_end));else hideTrialBanner();
+  hideTrialBanner();
   return;
  }
  hideTrialBanner();
@@ -1476,16 +1485,6 @@ function applyBillingGate(){
   ?'<button class="btn" style="width:100%;justify-content:center;font-size:15px;padding:12px" onclick="startCheckout()">Subscribe now</button>'
   :'<div class="muted" style="font-size:13px">Ask your clinic owner to renew the subscription.</div>';
  overlay.style.display='flex';
-}
-function showTrialBanner(days){
- let el=document.getElementById('trialBanner');
- if(!el){
-  el=document.createElement('div');el.id='trialBanner';
-  el.style.cssText='position:fixed;top:0;left:0;right:0;z-index:900;background:#fef3c7;color:#92400e;text-align:center;padding:7px 12px;font-size:12.5px;font-weight:600';
-  document.body.appendChild(el);
- }
- const dayText=days!==null&&days>=0?days+' day'+(days===1?'':'s')+' left in your trial':'Trial ending soon';
- el.innerHTML=dayText+(CUR_IS_OWNER?' — <a href="#" onclick="startCheckout();return false;" style="color:#92400e;text-decoration:underline;font-weight:700">Subscribe now</a>':' — ask your clinic owner to subscribe.');
 }
 function hideTrialBanner(){const el=document.getElementById('trialBanner');if(el)el.remove();}
 async function startCheckout(){
@@ -2008,7 +2007,7 @@ async function restoreFullBackup(e){
  }
 }
 // App data loads after sign-in (see afterLogin → sbLoadData above), not synchronously here.
-if(!sb){const eEl=document.getElementById('demoPassErr');if(eEl){eEl.innerHTML="⚠️ Supabase isn't configured yet.<br>Paste your Project URL and anon key at the top of the &lt;script&gt; tag.";eEl.style.display='block';}}
+if(!sb){const eEl=document.getElementById('demoPassErr');if(eEl){eEl.innerHTML="⚠️ Can't reach the server.<br>Check your internet connection and reload the page. If this keeps happening, contact support.";eEl.style.display='block';}}
 
 const DXLIST=["Mechanical low back pain","Lumbar disc prolapse (PIVD)","Sacroiliac joint dysfunction","Cervical spondylosis","Cervical radiculopathy","Postural neck pain","Frozen shoulder (adhesive capsulitis)","Rotator cuff tendinopathy","Subacromial impingement","Tennis elbow (lateral epicondylitis)","Golfer's elbow (medial epicondylitis)","Carpal tunnel syndrome","De Quervain's tenosynovitis","Knee osteoarthritis","ACL reconstruction rehab","Meniscal injury","Patellofemoral pain syndrome","Plantar fasciitis","Ankle sprain (lateral ligament)","Achilles tendinopathy","Sciatica","Post-fracture stiffness","Stroke (hemiplegia) rehab","Bell's palsy","Parkinson's — balance & gait","Post-natal back pain"];
 const MODALITIES=[
@@ -2085,6 +2084,7 @@ function promptNewExercise(regId,exId,taId){
   toast("💾 Saved \""+val+"\" under "+region+" — it'll show up in the exercise library for every future patient.",3000);
 }
 
+const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const pById=id=>DB.patients.find(p=>p.id===id)||{name:"—"};
 function patientCode(p){const base=(p.dob||"").split("-").reverse().join("");if(!base)return(p.id||"").toUpperCase();const same=DB.patients.filter(x=>x.dob===p.dob);if(same.length>1){const idx=same.findIndex(x=>x.id===p.id);return base+"-"+(idx+1);}return base;}
 function ageFromDob(dob){if(!dob)return"";const b=new Date(dob),n=new Date(todayISO);let a=n.getFullYear()-b.getFullYear();if(n.getMonth()<b.getMonth()||(n.getMonth()===b.getMonth()&&n.getDate()<b.getDate()))a--;return a;}
@@ -2232,11 +2232,11 @@ views.dashboard=()=>{
  <div class="two-col">
   <div class="panel"><div class="panel-h"><h3>Today's Schedule — ${fmtDate(todayISO)}</h3><button class="btn sm" onclick="go('appointments')">View all</button></div>
    <div class="panel-b flush"><table><thead><tr><th>Time</th><th>Patient</th><th>Type</th><th>Therapist</th><th>Status</th></tr></thead><tbody>
-   ${todayAppts.sort((a,b)=>a.time.localeCompare(b.time)).map(a=>{const p=pById(a.pid);return `<tr${isApptLate(a)?' style="background:#fef2f2"':''}><td><b>${a.time}</b></td><td><div class="pcell"><div class="avatar">${initials(p.name)}</div><div><div class="nm">${p.name}</div><div class="mt">${p.condition}</div></div></div></td><td>${a.type}</td><td>${a.therapist}</td><td><span class="tag ${apptStatusCls(a)}">${apptStatusLabel(a)}</span></td></tr>`;}).join("")||'<tr><td colspan=5 class=empty>No appointments today</td></tr>'}
+   ${todayAppts.sort((a,b)=>a.time.localeCompare(b.time)).map(a=>{const p=pById(a.pid);return `<tr${isApptLate(a)?' style="background:#fef2f2"':''}><td><b>${a.time}</b></td><td><div class="pcell"><div class="avatar">${initials(p.name)}</div><div><div class="nm">${esc(p.name)}</div><div class="mt">${esc(p.condition)}</div></div></div></td><td>${a.type}</td><td>${a.therapist}</td><td><span class="tag ${apptStatusCls(a)}">${apptStatusLabel(a)}</span></td></tr>`;}).join("")||'<tr><td colspan=5 class=empty>No appointments today</td></tr>'}
    </tbody></table></div></div>
   <div>
    <div class="panel"><div class="panel-h"><h3>Pending Payments</h3></div><div class="panel-b">
-    ${pendingInv.map(i=>{const p=pById(i.pid);return `<div class="list-row" style="display:flex;justify-content:space-between;align-items:center"><div><b>${p.name}</b><div class="mt muted">${i.id}</div></div><div style="text-align:right"><b>${inr(invTotals(i).total)}</b><div><span class="tag amber">Pending</span></div></div></div>`;}).join("")||'<div class="empty">All settled 🎉</div>'}
+    ${pendingInv.map(i=>{const p=pById(i.pid);return `<div class="list-row" style="display:flex;justify-content:space-between;align-items:center"><div><b>${esc(p.name)}</b><div class="mt muted">${i.id}</div></div><div style="text-align:right"><b>${inr(invTotals(i).total)}</b><div><span class="tag amber">Pending</span></div></div></div>`;}).join("")||'<div class="empty">All settled 🎉</div>'}
    </div></div>
    <div class="panel"><div class="panel-h"><h3>Messaging</h3></div><div class="panel-b">
     <div class="kpi-mini"><div><b style="color:#15803d">${DB.reminders.length}</b><span>Sent</span></div><div><b style="color:var(--warn)">${pendingInv.length}</b><span>Payment dues</span></div></div>
@@ -2261,10 +2261,10 @@ function therapistDash(){
  <div class="two-col">
   <div class="panel"><div class="panel-h"><h3>My Schedule — ${fmtDate(todayISO)}</h3><button class="btn sm" onclick="go('appointments')">View all</button></div>
    <div class="panel-b flush"><table><thead><tr><th>Time</th><th>Patient</th><th>Type</th><th>Status</th></tr></thead><tbody>
-   ${todayA.map(a=>{const p=pById(a.pid);return `<tr${isApptLate(a)?' style="background:#fef2f2"':''}><td><b>${a.time}</b></td><td><div class="pcell"><div class="avatar">${initials(p.name)}</div><div><div class="nm">${p.name}</div><div class="mt">${p.condition}</div></div></div></td><td>${a.type}</td><td><span class="tag ${apptStatusCls(a)}">${apptStatusLabel(a)}</span></td></tr>`;}).join("")||'<tr><td colspan=4 class=empty>No sessions today</td></tr>'}
+   ${todayA.map(a=>{const p=pById(a.pid);return `<tr${isApptLate(a)?' style="background:#fef2f2"':''}><td><b>${a.time}</b></td><td><div class="pcell"><div class="avatar">${initials(p.name)}</div><div><div class="nm">${esc(p.name)}</div><div class="mt">${esc(p.condition)}</div></div></div></td><td>${a.type}</td><td><span class="tag ${apptStatusCls(a)}">${apptStatusLabel(a)}</span></td></tr>`;}).join("")||'<tr><td colspan=4 class=empty>No sessions today</td></tr>'}
    </tbody></table></div></div>
   <div class="panel"><div class="panel-h"><h3>My Treatment Plans</h3></div><div class="panel-b">
-   ${myPlans.map(t=>{const p=pById(t.pid);const pct=Math.round(t.done/t.sessions*100);return `<div class="list-row"><div style="display:flex;justify-content:space-between"><b>${p.name}</b><span class="muted">${t.done}/${t.sessions}</span></div><div class="mt muted">${t.diagnosis}</div><div class="bar"><div style="width:${pct}%"></div></div></div>`;}).join("")||'<div class=muted>No active plans</div>'}
+   ${myPlans.map(t=>{const p=pById(t.pid);const pct=Math.round(t.done/t.sessions*100);return `<div class="list-row"><div style="display:flex;justify-content:space-between"><b>${esc(p.name)}</b><span class="muted">${t.done}/${t.sessions}</span></div><div class="mt muted">${esc(t.diagnosis)}</div><div class="bar"><div style="width:${pct}%"></div></div></div>`;}).join("")||'<div class=muted>No active plans</div>'}
   </div></div>
  </div>
  <div class="muted" style="font-size:12.5px;margin-top:4px">🔒 As a therapist, you see only your own patients and sessions — not clinic revenue, payroll, or other therapists' data.</div>`;
@@ -2353,7 +2353,7 @@ function patientView(id,tab){const p=pById(id);const T=(!canDo('clinical.view')&
  const homePlans=plans.filter(t=>t.home&&Array.isArray(t.home)&&t.home.length);
  const visits=[];plans.forEach(t=>(t.visits||[]).forEach(s=>visits.push({...s,planId:t.id})));visits.sort((a,b)=>b.date.localeCompare(a.date)||b.n-a.n);
  const show=t=>T===t?"block":"none";
- openModal(`<div class="modal-h"><h3><div class="pcell"><div class="avatar">${initials(p.name)}</div><div><div>${p.name}</div><div class="mt muted">ID ${patientCode(p)} · ${p.age}y · ${p.gender==='M'?'Male':'Female'} · <a href="tel:${(p.phone||'').replace(/\D/g,'')}" style="color:var(--accent);text-decoration:none">📞 ${p.phone}</a> · ${p.therapist}</div><div class="mt muted">Registered ${fmtDate(p.since)}${p.sinceTime?' at '+p.sinceTime:''}</div></div></div></h3><button class="x" onclick="closeModal()">×</button></div>
+ openModal(`<div class="modal-h"><h3><div class="pcell"><div class="avatar">${initials(p.name)}</div><div><div>${esc(p.name)}</div><div class="mt muted">ID ${patientCode(p)} · ${p.age}y · ${p.gender==='M'?'Male':'Female'} · <a href="tel:${(p.phone||'').replace(/\D/g,'')}" style="color:var(--accent);text-decoration:none">📞 ${esc(p.phone)}</a> · ${p.therapist}</div><div class="mt muted">Registered ${fmtDate(p.since)}${p.sinceTime?' at '+p.sinceTime:''}</div></div></div></h3><button class="x" onclick="closeModal()">×</button></div>
  <div class="modal-b">
   <div class="tabs" id="pvtabs">
    ${!canDo('clinical.view')?'':`<button class="${T==='assess'?'active':''}" onclick="pvtab(this,'assess')">📋 Assessment</button>`}
@@ -2374,7 +2374,7 @@ function patientView(id,tab){const p=pById(id);const T=(!canDo('clinical.view')&
    <hr class="sep"><b class="muted">Sessions</b>
    ${visits.length?visits.map(s=>`<div class="list-row" style="display:flex;justify-content:space-between;align-items:center"><span>Session #${s.n} · ${fmtDate(s.date)}</span>${s.paid?'<span class="tag green">✓ Paid</span>':`<button class="btn sm" style="background:var(--accent)" onclick="paySession('${s.planId}','${s.id}')">💳 End &amp; Pay</button>`}</div>`).join(""):'<div class=muted style="padding:6px 0">No sessions logged yet.</div>'}
    `:`
-   ${plans.length?plans.map(t=>`<div class="list-row"><div style="display:flex;justify-content:space-between"><b>${t.diagnosis}</b><span class="tag teal">${t.done}/${t.sessions} sessions</span></div><div class="mt muted">${t.goal}</div></div>`).join(""):'<div class=muted style="padding:6px 0">No treatment plan yet.</div>'}
+   ${plans.length?plans.map(t=>`<div class="list-row"><div style="display:flex;justify-content:space-between"><b>${esc(t.diagnosis)}</b><span class="tag teal">${t.done}/${t.sessions} sessions</span></div><div class="mt muted">${t.goal}</div></div>`).join(""):'<div class=muted style="padding:6px 0">No treatment plan yet.</div>'}
    ${visits.length?'<hr class="sep">'+painTrendSVG(visits):''}
    <hr class="sep"><b class="muted">Sessions given — date-wise</b>
    ${visits.length?visits.map(s=>`<details style="border:0.5px solid var(--line);border-radius:8px;margin:8px 0"><summary style="padding:10px 12px;cursor:pointer"><b>Session #${s.n} · ${fmtDate(s.date)}</b><span style="float:right">${s.pain!==''&&s.pain!=null?'<span class="tag '+(+s.pain<=3?'green':+s.pain<=6?'amber':'red')+'">Pain '+s.pain+'/10</span> ':''}<span class="muted" style="font-size:12px">${s.therapist.replace('Dr. ','')}</span></span></summary><div style="padding:0 12px 12px">${s.modalities&&s.modalities.length?'<div style="margin-bottom:6px"><b class="muted" style="font-size:12px">Treatments: </b>'+s.modalities.map(m=>'<span class="tag teal">'+m+'</span> ').join("")+'</div>':''}${s.exercises&&s.exercises.length?'<div style="margin-bottom:6px"><b class="muted" style="font-size:12px">Exercises: </b>'+s.exercises.map(e=>'<span class="tag gray">'+e+'</span> ').join("")+'</div>':''}${s.note?'<div style="font-size:12.5px;margin-top:4px">📝 '+s.note+'</div>':''}<div style="margin-top:8px"><button class="btn sm sec" onclick="sessionForm('${s.planId}','${s.id}')">Edit session</button></div></div></details>`).join(""):'<div class=muted style="padding:6px 0">No sessions logged yet.</div>'}
@@ -2420,8 +2420,8 @@ function printHome(id){const p=pById(id);const hp=DB.plans.filter(t=>t.pid===id&
  openModal(`<div class="modal-h"><h3>Home Exercise Programme</h3><button class="x" onclick="closeModal()">×</button></div>
  <div class="modal-b"><div class="inv">
   <div class="inv-h"><div><h2>${DB.settings.clinic}</h2><div class="muted">${DB.branches[0].address}</div></div><div style="text-align:right"><b>🏠 Home Programme</b><div class="muted">${fmtDate(todayISO)}</div></div></div>
-  <div style="display:flex;justify-content:space-between;margin-bottom:10px"><b>${p.name}</b><span class="muted">${p.age}y / ${p.gender} · ${p.phone}</span></div>
-  ${hp.map(t=>`<div style="margin-bottom:12px"><b>${t.diagnosis}</b> <span class="muted">— ${t.homeFreq||'as advised'}</span><ul style="margin:6px 0 0 20px">${(Array.isArray(t.home)?t.home:[]).map(e=>`<li style="padding:3px 0">${e}</li>`).join("")}</ul></div>`).join("")}
+  <div style="display:flex;justify-content:space-between;margin-bottom:10px"><b>${esc(p.name)}</b><span class="muted">${p.age}y / ${p.gender} · ${esc(p.phone)}</span></div>
+  ${hp.map(t=>`<div style="margin-bottom:12px"><b>${esc(t.diagnosis)}</b> <span class="muted">— ${t.homeFreq||'as advised'}</span><ul style="margin:6px 0 0 20px">${(Array.isArray(t.home)?t.home:[]).map(e=>`<li style="padding:3px 0">${e}</li>`).join("")}</ul></div>`).join("")}
   <hr class="sep"><div class="muted" style="font-size:12px">Do these at home as advised. Stop and contact us if pain increases. — Team ${DB.settings.clinic}, Indore</div>
  </div></div>
  <div class="modal-f"><button class="btn sec" onclick="printModalDoc()">🖨 Print</button><button class="btn sec" onclick="downloadHomePlanPDF('${id}')">⬇ Save PDF</button><button class="btn" style="background:#25D366" onclick="sendHomeWA('${id}')">📲 Send on WhatsApp</button></div>`,true);}
@@ -2464,7 +2464,7 @@ function sendHomeWA(pid){
   const first=p.name.split(' ')[0];
   let msg=`Hi ${first} 👋\n\nHere are your home exercises from *${DB.settings.clinic}*:\n\n`;
   hp.forEach(t=>{
-    msg+=`*${t.diagnosis}*`;
+    msg+=`*${esc(t.diagnosis)}*`;
     if(t.homeFreq) msg+=` — ${t.homeFreq}`;
     msg+=`\n`;
     (Array.isArray(t.home)?t.home:[]).forEach((e,i)=>{msg+=`${i+1}. ${e}\n`;});
@@ -2503,7 +2503,7 @@ function addHomeLink(){
 // each exercise's link once, ever — after that it's a pick from a dropdown for any patient.
 function exLibOptionsHTML(){
   return (DB.exerciseLinks||[]).slice().sort((a,b)=>a.name.localeCompare(b.name))
-    .map(e=>`<option value="${e.id}">${e.name}${e.link?' — '+(e.link.length>38?e.link.slice(0,38)+'…':e.link):''}</option>`).join("");
+    .map(e=>`<option value="${e.id}">${esc(e.name)}${e.link?' — '+(e.link.length>38?e.link.slice(0,38)+'…':e.link):''}</option>`).join("");
 }
 function hlLibPickerHTML(listVar){
   return `<div style="display:flex;gap:6px;margin-bottom:8px">
@@ -2551,7 +2551,7 @@ function manageExerciseLibrary(){
      <input id="mel_link" placeholder="YouTube or website link" style="flex:2;min-width:160px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px" onkeydown="if(event.key==='Enter')addExerciseLinkFromManage()">
      <button type="button" class="btn sm" onclick="addExerciseLinkFromManage()">+ Add</button>
     </div>
-    <div id="exLibList">${list.length?list.map(e=>`<div style="display:flex;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)"><div style="flex:1;min-width:0"><b style="font-size:13.5px">${e.name}</b><div class="muted" style="font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e.link}</div></div><button class="btn sm sec" style="color:var(--danger);border-color:var(--danger)" onclick="deleteExerciseLibEntry('${e.id}')">🗑</button></div>`).join(""):'<div class="empty" style="padding:24px 0">No saved exercises yet — add one above, or save one from any patient\'s home programme with the 💾 button.</div>'}</div>
+    <div id="exLibList">${list.length?list.map(e=>`<div style="display:flex;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)"><div style="flex:1;min-width:0"><b style="font-size:13.5px">${esc(e.name)}</b><div class="muted" style="font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(e.link)}</div></div><button class="btn sm sec" style="color:var(--danger);border-color:var(--danger)" onclick="deleteExerciseLibEntry('${e.id}')">🗑</button></div>`).join(""):'<div class="empty" style="padding:24px 0">No saved exercises yet — add one above, or save one from any patient\'s home programme with the 💾 button.</div>'}</div>
    </div>`);
 }
 function addExerciseLinkFromManage(){
@@ -2573,7 +2573,7 @@ function managePresets(){
   const ex=(DB.exercisePresets||[]).slice().sort((a,b)=>(a.region||'').localeCompare(b.region||'')||a.name.localeCompare(b.name));
   const mods=(DB.customModalities||[]).slice().sort((a,b)=>a.localeCompare(b));
   const byRegion={};ex.forEach(e=>{(byRegion[e.region||'Other']=byRegion[e.region||'Other']||[]).push(e);});
-  const exHTML=ex.length?Object.keys(byRegion).map(r=>`<div style="margin-bottom:6px"><div class="muted" style="font-size:11px;font-weight:700;text-transform:uppercase;margin:10px 0 4px">${r}</div>${byRegion[r].map(e=>`<div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)"><div style="flex:1;min-width:0"><b style="font-size:13.5px">${e.name}</b>${e.dose?` <span class="muted" style="font-size:12px">— ${e.dose}</span>`:''}</div><button class="btn sm sec" style="color:var(--danger);border-color:var(--danger)" onclick="deleteExercisePreset('${e.id}')">🗑</button></div>`).join("")}</div>`).join(""):'<div class="empty" style="padding:16px 0">No saved exercises yet — add one below.</div>';
+  const exHTML=ex.length?Object.keys(byRegion).map(r=>`<div style="margin-bottom:6px"><div class="muted" style="font-size:11px;font-weight:700;text-transform:uppercase;margin:10px 0 4px">${r}</div>${byRegion[r].map(e=>`<div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)"><div style="flex:1;min-width:0"><b style="font-size:13.5px">${esc(e.name)}</b>${e.dose?` <span class="muted" style="font-size:12px">— ${esc(e.dose)}</span>`:''}</div><button class="btn sm sec" style="color:var(--danger);border-color:var(--danger)" onclick="deleteExercisePreset('${e.id}')">🗑</button></div>`).join("")}</div>`).join(""):'<div class="empty" style="padding:16px 0">No saved exercises yet — add one below.</div>';
   const modHTML=mods.length?mods.map(m=>`<div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)"><div style="flex:1;min-width:0"><b style="font-size:13.5px">${m}</b></div><button class="btn sm sec" style="color:var(--danger);border-color:var(--danger)" onclick="deleteCustomModality('${m.replace(/'/g,"\\'")}')">🗑</button></div>`).join(""):'<div class="empty" style="padding:16px 0">No custom modalities saved yet — add one below.</div>';
   openModal(`<div class="modal-h"><h3>🗂 Saved exercises &amp; modalities</h3><button class="x" onclick="closeModal()">×</button></div>
    <div class="modal-b">
@@ -2684,19 +2684,19 @@ function patientForm(id){const p=id?pById(id):{name:"",dob:"",gender:"M",phone:"
  openModal(`<div class="modal-h"><h3>${id?"Edit":"New"} Patient</h3><button class="x" onclick="closeModal()">×</button></div>
  <div class="modal-b">
   ${id?`<div class="muted" style="font-size:12.5px;margin-bottom:10px">Patient ID: <b style="color:var(--brand)">${patientCode(p)}</b> (date of birth)</div>`:''}
-  <div class="field"><label>Full name</label><input id="f_name" value="${p.name}"></div>
+  <div class="field"><label>Full name</label><input id="f_name" value="${esc(p.name)}"></div>
   <div class="grid3"><div class="field"><label>Date of birth <span class="muted">(= patient ID)</span></label><input id="f_dob" type="date" value="${p.dob||''}"></div>
    <div class="field"><label>Gender</label><select id="f_gender"><option ${p.gender==='M'?'selected':''}>M</option><option ${p.gender==='F'?'selected':''}>F</option></select></div>
-   <div class="field"><label>Phone</label><input id="f_phone" value="${p.phone}"></div></div>
-  <div class="field"><label>Condition / Diagnosis</label><input id="f_cond" value="${p.condition}"></div>
+   <div class="field"><label>Phone</label><input id="f_phone" value="${esc(p.phone)}"></div></div>
+  <div class="field"><label>Condition / Diagnosis</label><input id="f_cond" value="${esc(p.condition)}"></div>
   <div class="grid2"><div class="field"><label>Email</label><input id="f_email" value="${p.email||''}"></div>
    <div class="field"><label>Occupation</label><input id="f_occ" value="${p.occ||''}"></div></div>
   <div class="field"><label>Address</label><input id="f_addr" value="${p.addr||''}"></div>
   <div class="grid2"><div class="field"><label>Emergency contact — name</label><input id="f_emname" value="${p.emName||''}"></div>
    <div class="field"><label>Emergency contact — phone</label><input id="f_emphone" value="${p.emPhone||''}"></div></div>
   <div class="field"><label>Referred by (doctor)</label><input id="f_refdr" value="${p.refDr||''}"></div>
-  <div class="grid2"><div class="field"><label>Therapist</label><select id="f_ther">${DB.staff.map(s=>`<option ${p.therapist===s.name?'selected':''}>${s.name}</option>`).join("")}</select></div>
-   <div class="field"><label>Branch</label><select id="f_branch">${DB.branches.map(b=>`<option value="${b.id}" ${p.branch===b.id?'selected':''}>${b.name}</option>`).join("")}</select></div></div>
+  <div class="grid2"><div class="field"><label>Therapist</label><select id="f_ther">${DB.staff.map(s=>`<option ${p.therapist===s.name?'selected':''}>${esc(s.name)}</option>`).join("")}</select></div>
+   <div class="field"><label>Branch</label><select id="f_branch">${DB.branches.map(b=>`<option value="${b.id}" ${p.branch===b.id?'selected':''}>${esc(b.name)}</option>`).join("")}</select></div></div>
  </div>
  <div class="modal-f"><button class="btn sec" onclick="closeModal()">Cancel</button><button class="btn" onclick="savePatient('${id||''}')">Save</button></div>`);}
 function savePatient(id){const v=k=>{const el=document.getElementById(k);return el?el.value:"";};const dob=v("f_dob");const obj={name:v("f_name"),dob,age:ageFromDob(dob),gender:v("f_gender"),phone:v("f_phone"),condition:v("f_cond"),email:v("f_email"),occ:v("f_occ"),addr:v("f_addr"),emName:v("f_emname"),emPhone:v("f_emphone"),refDr:v("f_refdr"),therapist:v("f_ther"),branch:v("f_branch")};
@@ -2774,12 +2774,12 @@ views.appointments=()=>{
   const byDate={};list.forEach(a=>{(byDate[a.date]=byDate[a.date]||[]).push(a);});
   return `<div class="panel">${toolbar}<div class="panel-b flush">
    ${Object.keys(byDate).map(d=>`<div class="cal-day">${fmtDate(d)} ${d===todayISO?'<span class="tag teal" style="margin-left:6px">Today</span>':''}</div>
-     <table><tbody>${byDate[d].map(a=>{const p=pById(a.pid);return `<tr class="clk" onclick="apptView('${a.id}')"${isApptLate(a)?' style="background:#fef2f2"':''}><td style="width:70px;border-left:4px solid ${therColor(a.therapist)}"><b>${a.time}</b></td><td><div class="pcell"><div class="avatar">${initials(p.name)}</div><div><div class="nm">${p.name}</div><div class="mt"><a href="tel:${(p.phone||'').replace(/\D/g,'')}" style="color:var(--accent);text-decoration:none">📞 ${p.phone}</a></div></div></div></td><td>${a.type}</td><td>${a.therapist}</td><td><span class="tag ${apptStatusCls(a)}">${apptStatusLabel(a)}</span></td></tr>`;}).join("")}</tbody></table>`).join("")||'<div class=empty>No appointments</div>'}
+     <table><tbody>${byDate[d].map(a=>{const p=pById(a.pid);return `<tr class="clk" onclick="apptView('${a.id}')"${isApptLate(a)?' style="background:#fef2f2"':''}><td style="width:70px;border-left:4px solid ${therColor(a.therapist)}"><b>${a.time}</b></td><td><div class="pcell"><div class="avatar">${initials(p.name)}</div><div><div class="nm">${esc(p.name)}</div><div class="mt"><a href="tel:${(p.phone||'').replace(/\D/g,'')}" style="color:var(--accent);text-decoration:none">📞 ${esc(p.phone)}</a></div></div></div></td><td>${a.type}</td><td>${a.therapist}</td><td><span class="tag ${apptStatusCls(a)}">${apptStatusLabel(a)}</span></td></tr>`;}).join("")}</tbody></table>`).join("")||'<div class=empty>No appointments</div>'}
    </div></div>`;
  }
  const dayAppts=DB.appointments.filter(inBranch).filter(a=>a.date===calDate).filter(a=>!MYTHER||a.therapist===MYTHER);
  const hours=[];for(let h=0;h<=23;h++)hours.push(h);
- const block=a=>{const p=pById(a.pid);const late=isApptLate(a);return `<div onclick="event.stopPropagation();apptView('${a.id}')" style="border-left:3px solid ${late?'#dc2626':therColor(a.therapist)};background:${late?'#fef2f2':'#f3f7fc'};border-radius:6px;padding:5px 7px;margin-bottom:4px;cursor:pointer"><div style="font-weight:600;font-size:12px">${a.time} · ${p.name}</div><div style="font-size:11px;color:var(--muted)">${a.type}</div><div style="font-size:10.5px;color:${therColor(a.therapist)};margin-top:1px">${a.therapist||'(no therapist)'}</div><span class="tag ${apptStatusCls(a)}" style="font-size:10px;margin-top:2px">${apptStatusLabel(a)}</span></div>`;};
+ const block=a=>{const p=pById(a.pid);const late=isApptLate(a);return `<div onclick="event.stopPropagation();apptView('${a.id}')" style="border-left:3px solid ${late?'#dc2626':therColor(a.therapist)};background:${late?'#fef2f2':'#f3f7fc'};border-radius:6px;padding:5px 7px;margin-bottom:4px;cursor:pointer"><div style="font-weight:600;font-size:12px">${a.time} · ${esc(p.name)}</div><div style="font-size:11px;color:var(--muted)">${a.type}</div><div style="font-size:10.5px;color:${therColor(a.therapist)};margin-top:1px">${a.therapist||'(no therapist)'}</div><span class="tag ${apptStatusCls(a)}" style="font-size:10px;margin-top:2px">${apptStatusLabel(a)}</span></div>`;};
  const grid=`<table style="min-width:280px;width:100%"><tbody>
    ${hours.map(h=>{const cell=dayAppts.filter(a=>+a.time.split(":")[0]===h);return `<tr><td style="font-weight:600;color:var(--muted);vertical-align:top;width:64px">${pad2(h)}:00</td><td style="vertical-align:top;cursor:pointer" onclick="apptForm('${calDate}','${pad2(h)}:00','')">${cell.map(block).join("")||'<span style="color:#cdd5e0;font-size:12px">+</span>'}</td></tr>`;}).join("")}
  </tbody></table>`;
@@ -2793,7 +2793,7 @@ function setApptStatus(id,s){const a=DB.appointments.find(a=>a.id===id);a.status
 function apptView(id){const a=DB.appointments.find(x=>x.id===id);const p=pById(a.pid);
  openModal(`<div class="modal-h"><h3>Appointment</h3><button class="x" onclick="closeModal()">×</button></div>
  <div class="modal-b">
-  <div class="pcell" style="margin-bottom:12px"><div class="avatar">${initials(p.name)}</div><div><div class="nm">${p.name}</div><div class="mt muted">${p.phone}</div></div></div>
+  <div class="pcell" style="margin-bottom:12px"><div class="avatar">${initials(p.name)}</div><div><div class="nm">${esc(p.name)}</div><div class="mt muted">${esc(p.phone)}</div></div></div>
   <div class="grid2"><div><b class="muted">Date</b><div>${fmtDate(a.date)}</div></div><div><b class="muted">Time</b><div>${a.time}</div></div></div>
   <div class="grid2" style="margin-top:8px"><div><b class="muted">Type</b><div>${a.type}</div></div><div><div style="font-weight:600;color:${therColor(a.therapist)}">${a.therapist}</div></div></div>
   <div class="field" style="margin-top:12px"><label>Status</label><select onchange="setApptStatus('${a.id}',this.value)">${["Pending","Confirmed","Checked-in","Completed","Cancelled"].map(s=>`<option ${a.status===s?'selected':''}>` + `${s}</option>`).join("")}</select>${isApptLate(a)?'<div style="margin-top:6px"><span class="tag red">⏰ Late — patient has not arrived</span></div>':''}</div>
@@ -2811,7 +2811,7 @@ function editApptForm(id){const a=DB.appointments.find(x=>x.id===id);
  <div class="modal-b">
   <div class="grid2"><div class="field"><label>Date</label><input id="ea_date" type="date" value="${a.date}"></div><div class="field"><label>Time</label><input id="ea_time" type="time" value="${a.time}"></div></div>
   <div class="grid2"><div class="field"><label>Type</label><select id="ea_type">${["Therapy session","Follow-up","Assessment","Consultation"].map(t=>`<option ${a.type===t?'selected':''}>` + `${t}</option>`).join("")}</select></div>
-   <div class="field"><label>Therapist</label><select id="ea_ther">${DB.staff.map(s=>`<option ${a.therapist===s.name?'selected':''}>` + `${s.name}</option>`).join("")}</select></div></div>
+   <div class="field"><label>Therapist</label><select id="ea_ther">${DB.staff.map(s=>`<option ${a.therapist===s.name?'selected':''}>` + `${esc(s.name)}</option>`).join("")}</select></div></div>
  </div>
  <div class="modal-f"><button class="btn sec" onclick="apptView('${id}')">Cancel</button><button class="btn" onclick="saveEditAppt('${id}')">Save</button></div>`);}
 function saveEditAppt(id){const v=k=>document.getElementById(k).value;const a=DB.appointments.find(x=>x.id===id);a.date=v("ea_date");a.time=v("ea_time");a.type=v("ea_type");a.therapist=v("ea_ther");Appointments.update(id,{date:a.date,time:a.time,type:a.type,therapist:a.therapist});calDate=a.date;logAudit("Appointment","Rescheduled to "+a.date+" "+a.time,pById(a.pid).name);save();closeModal();render();}
@@ -2824,7 +2824,7 @@ function apptForm(date,time,ther){const pts=DB.patients.filter(p=>!MYTHER||p.the
    <input type="hidden" id="a_pid">
    <div id="a_pid_selected" style="font-size:12.5px;font-weight:600;color:var(--brand,#2563eb);margin:2px 0 6px;min-height:16px"></div>
    <div id="a_pid_list" style="width:100%;max-height:150px;overflow-y:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:8px;font-size:13px">
-    ${pts.map(p=>`<button type="button" class="pt-pick-row" data-pid="${p.id}" data-name="${p.name.replace(/"/g,'&quot;')}" data-txt="${(p.name+' '+(p.phone||'')+' '+(p.condition||'')).toLowerCase().replace(/"/g,'&quot;')}" onpointerup="selectApptPatient('${p.id}')" style="display:block;width:100%;text-align:left;background:#fff;border:none;padding:8px 10px;cursor:pointer;touch-action:manipulation;border-bottom:1px solid var(--line);font:inherit;color:inherit;-webkit-appearance:none;appearance:none;border-radius:0">${p.name} — ${p.phone||''} · ${p.condition||''}</button>`).join("")}
+    ${pts.map(p=>`<button type="button" class="pt-pick-row" data-pid="${p.id}" data-name="${p.name.replace(/"/g,'&quot;')}" data-txt="${(p.name+' '+(p.phone||'')+' '+(p.condition||'')).toLowerCase().replace(/"/g,'&quot;')}" onpointerup="selectApptPatient('${p.id}')" style="display:block;width:100%;text-align:left;background:#fff;border:none;padding:8px 10px;cursor:pointer;touch-action:manipulation;border-bottom:1px solid var(--line);font:inherit;color:inherit;-webkit-appearance:none;appearance:none;border-radius:0">${esc(p.name)} — ${p.phone||''} · ${p.condition||''}</button>`).join("")}
    </div>
    <button type="button" class="btn ghost sm" style="margin-top:6px" onclick="toggleQuickAddPatient()">+ New patient (name only)</button>
    <div id="qap_box" style="display:none;margin-top:8px;padding:8px;border:1px dashed var(--line);border-radius:8px">
@@ -2838,7 +2838,7 @@ function apptForm(date,time,ther){const pts=DB.patients.filter(p=>!MYTHER||p.the
   </div>
   <div class="grid2"><div class="field"><label>Date</label><input id="a_date" type="date" value="${date||calDate}"></div><div class="field"><label>Time</label><input id="a_time" type="time" value="${time||'10:00'}"></div></div>
   <div class="grid2"><div class="field"><label>Type</label><select id="a_type"><option>Therapy session</option><option>Follow-up</option><option>Assessment</option><option>Consultation</option></select></div>
-   <div class="field"><label>Therapist</label><select id="a_ther">${DB.staff.map(s=>`<option ${ther===s.name||MYTHER===s.name?'selected':''}>` + `${s.name}</option>`).join("")}</select></div></div>
+   <div class="field"><label>Therapist</label><select id="a_ther">${DB.staff.map(s=>`<option ${ther===s.name||MYTHER===s.name?'selected':''}>` + `${esc(s.name)}</option>`).join("")}</select></div></div>
   <hr class="sep">
   <div style="font-size:12.5px;font-weight:600;margin-bottom:6px">🔁 Repeat (optional)</div>
   <div class="grid2">
@@ -2920,7 +2920,7 @@ function saveAppt(){const v=k=>document.getElementById(k).value;
 /* CONSULTATIONS */
 views.consultations=()=>`<div class="panel"><div class="panel-h"><h3>Consultation Notes</h3><button class="btn" onclick="consultForm()">+ New Consultation</button></div>
  <div class="panel-b flush"><table><thead><tr><th>Date</th><th>Patient</th><th>Diagnosis</th><th>Therapist</th><th></th></tr></thead><tbody>
- ${DB.consultations.filter(c=>inBranch(pById(c.pid))).filter(c=>!MYTHER||c.therapist===MYTHER).sort((a,b)=>b.date.localeCompare(a.date)).map(c=>{const p=pById(c.pid);return `<tr class="clk" onclick="consultView('${c.id}')"><td>${fmtDate(c.date)}</td><td><div class="pcell"><div class="avatar">${initials(p.name)}</div><div class="nm">${p.name}</div></div></td><td>${c.dx}</td><td>${c.therapist}</td><td style="text-align:right"><button class="btn sm sec" onclick="event.stopPropagation();printRx('${c.id}')">🖨 Rx</button></td></tr>`;}).join("")||'<tr><td colspan=5 class=empty>No consultations</td></tr>'}
+ ${DB.consultations.filter(c=>inBranch(pById(c.pid))).filter(c=>!MYTHER||c.therapist===MYTHER).sort((a,b)=>b.date.localeCompare(a.date)).map(c=>{const p=pById(c.pid);return `<tr class="clk" onclick="consultView('${c.id}')"><td>${fmtDate(c.date)}</td><td><div class="pcell"><div class="avatar">${initials(p.name)}</div><div class="nm">${esc(p.name)}</div></div></td><td>${c.dx}</td><td>${c.therapist}</td><td style="text-align:right"><button class="btn sm sec" onclick="event.stopPropagation();printRx('${c.id}')">🖨 Rx</button></td></tr>`;}).join("")||'<tr><td colspan=5 class=empty>No consultations</td></tr>'}
  </tbody></table></div></div>`;
 function row(lbl,val){return val?`<b class="muted">${lbl}</b><div style="margin:2px 0 10px">${val}</div>`:"";}
 function consultView(id){const c=DB.consultations.find(x=>x.id===id);const p=pById(c.pid);
@@ -2930,7 +2930,7 @@ function consultView(id){const c=DB.consultations.find(x=>x.id===id);const p=pBy
  const A=[has(c.dx)&&"Diagnosis: "+c.dx,has(c.problem)&&"Problems: "+c.problem].filter(Boolean).join("<br>");
  const P=[has(c.stg)&&"Short-term: "+c.stg,has(c.ltg)&&"Long-term: "+c.ltg,has(c.freq)&&"Sessions: "+c.freq,has(c.advice)&&"Advice: "+c.advice].filter(Boolean).join("<br>");
  const sec=(cls,title,body)=>body?`<div class="soap-h ${cls}">${title}</div><div style="margin-bottom:6px;font-size:13.5px">${body}</div>`:"";
- openModal(`<div class="modal-h"><h3>Assessment — ${p.name}</h3><button class="x" onclick="closeModal()">×</button></div>
+ openModal(`<div class="modal-h"><h3>Assessment — ${esc(p.name)}</h3><button class="x" onclick="closeModal()">×</button></div>
  <div class="modal-b">
   <div class="muted" style="margin-bottom:10px">${fmtDate(c.date)} · ${c.therapist} · <span class="tag ${c.mode==='upload'?'amber':'teal'}">${c.mode==='upload'?'Paper assessment':'Digital template'}</span></div>
   ${c.assessFile?`<div class="r-msg" style="margin-bottom:10px">📎 Scanned assessment attached: <b>${c.assessFile}</b></div>`:""}
@@ -2943,7 +2943,7 @@ function consultView(id){const c=DB.consultations.find(x=>x.id===id);const p=pBy
  <div class="modal-f"><button class="btn sec" onclick="printRx('${id}')">🖨 Print Prescription</button><button class="btn" onclick="closeModal()">Close</button></div>`,true);}
 function consultForm(_,pid){openModal(`<div class="modal-h"><h3>New Assessment</h3><button class="x" onclick="closeModal()">×</button></div>
  <div class="modal-b">
-  <div class="field"><label>Patient</label><select id="c_pid">${DB.patients.map(p=>`<option value="${p.id}" ${pid===p.id?'selected':''}>${p.name}</option>`).join("")}</select></div>
+  <div class="field"><label>Patient</label><select id="c_pid">${DB.patients.map(p=>`<option value="${p.id}" ${pid===p.id?'selected':''}>${esc(p.name)}</option>`).join("")}</select></div>
   <label style="font-weight:600;font-size:12.5px;color:#3a4456">Assessment method</label>
   <div class="tabs" id="asmtabs" style="margin:6px 0 14px">
     <button class="active" data-m="template" onclick="asmMode('template')">📝 Digital template</button>
@@ -2990,7 +2990,7 @@ function printRx(id){const c=DB.consultations.find(x=>x.id===id);const p=pById(c
  openModal(`<div class="modal-h"><h3>Prescription</h3><button class="x" onclick="closeModal()">×</button></div>
  <div class="modal-b"><div class="inv">
   <div class="inv-h"><div><h2>${DB.settings.clinic}</h2><div class="muted">${DB.branches[0].address}</div><div class="muted">${c.therapist} · Physiotherapist</div></div><div style="text-align:right"><b>Rx Prescription</b><div class="muted">${fmtDate(c.date)}</div></div></div>
-  <div style="display:flex;justify-content:space-between;margin-bottom:10px"><b>${p.name}</b><span class="muted">${p.age}y / ${p.gender} · ${p.phone}</span></div>
+  <div style="display:flex;justify-content:space-between;margin-bottom:10px"><b>${esc(p.name)}</b><span class="muted">${p.age}y / ${p.gender} · ${esc(p.phone)}</span></div>
   <b class="muted">Diagnosis:</b> ${c.dx}<hr class="sep">
   <b style="font-size:18px">Rx</b>
   <div style="margin:10px 0 10px 20px">${(c.rx||[]).map((r,i)=>`<div style="padding:5px 0">${i+1}. ${r}</div>`).join("")||'<div class=muted>No medication</div>'}</div>
@@ -3297,7 +3297,7 @@ function sessionForm(planId,sid,forcedN){const t=DB.plans.find(x=>x.id===planId)
  const mods=s?s.modalities:(latestAsmt&&latestAsmt.modalities&&latestAsmt.modalities.length?latestAsmt.modalities:(t.modalities||[]));
  const exs=s?s.exercises:(latestAsmt&&latestAsmt.exercises&&latestAsmt.exercises.length?latestAsmt.exercises:(t.exercises||[]));
  const regOpts=REGIONS.map(r=>`<option>${r}</option>`).join("");
- openModal(`<div class="modal-h"><h3>Session #${nextN} — ${p.name}</h3><button class="x" onclick="closeModal()">×</button></div>
+ openModal(`<div class="modal-h"><h3>Session #${nextN} — ${esc(p.name)}</h3><button class="x" onclick="closeModal()">×</button></div>
  <div class="modal-b">
   <div class="grid2"><div class="field"><label>Date</label><div style="display:flex;gap:6px;align-items:center"><input id="s_date" type="date" value="${s?s.date:todayISO}" style="flex:1"><button type="button" class="btn sm sec" onclick="document.getElementById('s_date').value=todayISO">Today</button></div></div>
    <div class="field"><label>Therapist (logged by)</label><select id="s_ther">${DB.staff.map(x=>`<option ${ (s?s.therapist:(MYTHER||t.diagnosis&&p.therapist))===x.name?'selected':''}>${x.name}</option>`).join("")}</select></div></div>
@@ -3355,7 +3355,7 @@ function saveSession(planId,sid,n){const v=k=>{const el=document.getElementById(
 function fillEx(regId,exId){
   const reg=document.getElementById(regId).value;
   const mine=(DB.exercisePresets||[]).filter(p=>p.region===reg).sort((a,b)=>a.name.localeCompare(b.name));
-  const mineHTML=mine.length?'<optgroup label="⭐ My saved">'+mine.map(p=>`<option value="${p.name}" data-dose="${(p.dose||'').replace(/"/g,'&quot;')}">${p.name}${p.dose?' — '+p.dose:''}</option>`).join("")+'</optgroup>':'';
+  const mineHTML=mine.length?'<optgroup label="⭐ My saved">'+mine.map(p=>`<option value="${esc(p.name)}" data-dose="${(p.dose||'').replace(/"/g,'&quot;')}">${esc(p.name)}${p.dose?' — '+p.dose:''}</option>`).join("")+'</optgroup>':'';
   const builtHTML=(EXLIB[reg]||[]).map(e=>`<option value="${e}">${e}</option>`).join("");
   document.getElementById(exId).innerHTML=mineHTML+builtHTML;
 }
@@ -3419,9 +3419,9 @@ function planForm(id,forcedPid){
  window._planFormId=id||'';
  openModal(`<div class="modal-h"><h3>${id?"Edit":"New"} Treatment Plan</h3><button class="x" onclick="closeModal()">×</button></div>
  <div class="modal-b">
-  <div class="field"><label>Patient</label><div style="display:flex;gap:6px"><select id="t_pid" style="flex:1" ${id?'':`onchange="planForm('',this.value)"`}>${DB.patients.map(p=>`<option value="${p.id}" ${t.pid===p.id?'selected':''}>${p.name}</option>`).join("")}</select><button type="button" class="btn sm sec" style="white-space:nowrap" onclick="pullFromAssessment()">📋 Pull from assessment</button></div></div>
+  <div class="field"><label>Patient</label><div style="display:flex;gap:6px"><select id="t_pid" style="flex:1" ${id?'':`onchange="planForm('',this.value)"`}>${DB.patients.map(p=>`<option value="${p.id}" ${t.pid===p.id?'selected':''}>${esc(p.name)}</option>`).join("")}</select><button type="button" class="btn sm sec" style="white-space:nowrap" onclick="pullFromAssessment()">📋 Pull from assessment</button></div></div>
   ${(!id&&t._fromAssessDate)?`<div class="muted" style="font-size:12px;margin:-6px 0 10px">✓ Pre-filled from this patient's assessment on ${fmtDate(t._fromAssessDate)} — review and adjust before saving.</div>`:''}
-  <div class="field"><label>Diagnosis</label><input id="t_dx" list="dxlist2" value="${t.diagnosis}" placeholder="Pick from list or type your own"><datalist id="dxlist2">${DXLIST.map(d=>`<option value="${d}">`).join("")}</datalist></div>
+  <div class="field"><label>Diagnosis</label><input id="t_dx" list="dxlist2" value="${esc(t.diagnosis)}" placeholder="Pick from list or type your own"><datalist id="dxlist2">${DXLIST.map(d=>`<option value="${d}">`).join("")}</datalist></div>
   <div class="field"><label>Goal</label><input id="t_goal" value="${t.goal}"></div>
   <div class="grid2"><div class="field"><label>Total sessions</label><input id="t_sess" type="number" value="${t.sessions}"></div><div class="field"><label>Completed</label><input id="t_done" type="number" value="${t.done}"></div></div>
   <div class="field"><label>Modalities / electrotherapy — pick & add (or type below)</label><div style="display:flex;gap:6px;margin:6px 0"><select id="mod_sel" style="flex:1;min-width:0;padding:8px;border:1px solid var(--line);border-radius:8px">${modOpts()}</select><button type="button" class="btn sm" onclick="addLine('mod_sel','t_mod')">+ Add</button><button type="button" class="btn sm sec" title="Type a new modality and save it for reuse with every future patient" onclick="promptNewModality('mod_sel','t_mod')">💾 New</button></div><textarea id="t_mod" rows="3" placeholder="One modality per line">${tmod.join("\n")}</textarea></div>
@@ -3600,7 +3600,7 @@ function assignPkg(pid){openModal(`<div class="modal-h"><h3>Assign Package</h3><
   <div class="field"><label style="display:flex;gap:7px;align-items:center;font-weight:400"><input type="checkbox" id="k_autobook" checked> Auto-schedule all appointments</label></div>
   <div class="grid2"><div class="field"><label>Session time</label><input id="k_time" type="time" value="10:00"></div>
    <div class="field"><label>Sessions / week</label><select id="k_perwk"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option><option>7</option></select></div></div>
-  <div class="field"><label>Therapist</label><select id="k_ther">${DB.staff.map(s=>`<option ${MYTHER===s.name?'selected':''}>${s.name}</option>`).join("")}</select></div>
+  <div class="field"><label>Therapist</label><select id="k_ther">${DB.staff.map(s=>`<option ${MYTHER===s.name?'selected':''}>${esc(s.name)}</option>`).join("")}</select></div>
   <div class="muted" style="font-size:12.5px">Sessions are available immediately even if partial payment. Balance tracked in patient ledger.</div>
  </div>
  <div class="modal-f"><button class="btn sec" onclick="closeModal()">Cancel</button><button class="btn" onclick="savePkg()">Assign</button></div>`);
@@ -3688,7 +3688,7 @@ views.billing=()=>{const inv=DB.invoices.filter(inBranch).slice().sort((a,b)=>b.
  const q=_invSearch.toLowerCase().trim();
  const filtered=inv.filter(i=>{const p=pById(i.pid);const nameMatch=!q||p.name.toLowerCase().includes(q)||i.id.toLowerCase().includes(q);const dateMatch=!_invDate||i.date===_invDate;const monthMatch=!_invMonth||(i.date||"").startsWith(_invMonth);return nameMatch&&monthMatch&&dateMatch;});
  const isFiltering=!!(q||_invDate||_invMonth);
- const rowHTML=i=>{const p=pById(i.pid);const desc=(i.items&&i.items[0]&&i.items[0].d)||'';return `<tr class="clk" onclick="viewInvoice('${i.id}')"><td><b>${i.id}</b></td><td>${p.name}</td><td>${fmtDate(i.date)}${i.time?`<div class="muted" style="font-size:10.5px">${i.time}</div>`:''}</td><td><b>${inr(invTotals(i).total)}</b></td><td>${i.mode}<div class="muted" style="font-size:10.5px;max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${desc}</div></td><td><span class="tag ${statusTag(i.status)}">${i.status}</span></td><td style="text-align:right">${i.status==='Pending'?`<button class="btn sm" onclick="event.stopPropagation();markPaid('${i.id}')">Mark paid</button> <button class="btn sm sec" onclick="event.stopPropagation();payRemind('${i.id}')">🔔</button>`:'<span class="muted">✓</span>'}</td></tr>`;};
+ const rowHTML=i=>{const p=pById(i.pid);const desc=(i.items&&i.items[0]&&i.items[0].d)||'';return `<tr class="clk" onclick="viewInvoice('${i.id}')"><td><b>${i.id}</b></td><td>${esc(p.name)}</td><td>${fmtDate(i.date)}${i.time?`<div class="muted" style="font-size:10.5px">${i.time}</div>`:''}</td><td><b>${inr(invTotals(i).total)}</b></td><td>${i.mode}<div class="muted" style="font-size:10.5px;max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${desc}</div></td><td><span class="tag ${statusTag(i.status)}">${i.status}</span></td><td style="text-align:right">${i.status==='Pending'?`<button class="btn sm" onclick="event.stopPropagation();markPaid('${i.id}')">Mark paid</button> <button class="btn sm sec" onclick="event.stopPropagation();payRemind('${i.id}')">🔔</button>`:'<span class="muted">✓</span>'}</td></tr>`;};
  let invTableHTML;
  if(isFiltering){
    invTableHTML=`<table><thead><tr><th>Invoice #</th><th>Patient</th><th>Date</th><th>Amount</th><th>Mode</th><th>Status</th><th></th></tr></thead><tbody>
@@ -3790,7 +3790,7 @@ function patientPickerHTML(prefix,patients,selectedId,extraLabelFn){
    <input type="hidden" id="${prefix}_pid" value="${selectedId||''}">
    <div id="${prefix}_pid_selected" style="font-size:12.5px;font-weight:600;color:var(--brand,#2563eb);margin:4px 0 2px;min-height:16px">${selP?'✓ Selected: '+selP.name:''}</div>
    <div id="${prefix}_pid_list" style="display:none;width:100%;max-height:220px;overflow-y:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:8px;font-size:13px;margin-top:4px">
-    ${sorted.map(p=>`<button type="button" class="pt-pick-row" data-pid="${p.id}" data-name="${p.name.replace(/"/g,'&quot;')}" data-txt="${(p.name+' '+(p.phone||'')+' '+(p.condition||'')).toLowerCase().replace(/"/g,'&quot;')}" onpointerup="selectPatientPicker('${prefix}','${p.id}')" style="display:block;width:100%;text-align:left;background:${p.id===selectedId?'var(--brand-soft,#dbeafe)':'#fff'};border:none;padding:8px 10px;cursor:pointer;touch-action:manipulation;border-bottom:1px solid var(--line);font:inherit;color:inherit;-webkit-appearance:none;appearance:none;border-radius:0">${p.name} — ${p.phone||''}${extraLabelFn?' · '+extraLabelFn(p):''}</button>`).join("")}
+    ${sorted.map(p=>`<button type="button" class="pt-pick-row" data-pid="${p.id}" data-name="${p.name.replace(/"/g,'&quot;')}" data-txt="${(p.name+' '+(p.phone||'')+' '+(p.condition||'')).toLowerCase().replace(/"/g,'&quot;')}" onpointerup="selectPatientPicker('${prefix}','${p.id}')" style="display:block;width:100%;text-align:left;background:${p.id===selectedId?'var(--brand-soft,#dbeafe)':'#fff'};border:none;padding:8px 10px;cursor:pointer;touch-action:manipulation;border-bottom:1px solid var(--line);font:inherit;color:inherit;-webkit-appearance:none;appearance:none;border-radius:0">${esc(p.name)} — ${p.phone||''}${extraLabelFn?' · '+extraLabelFn(p):''}</button>`).join("")}
    </div>`;
 }
 function togglePatientPicker(prefix){const list=document.getElementById(prefix+"_pid_list");if(!list)return;const willShow=list.style.display==='none';list.style.display=willShow?'block':'none';if(willShow){const s=document.getElementById(prefix+"_search");if(s)s.focus();}}
@@ -3833,7 +3833,7 @@ function saveTopup(){const v=k=>document.getElementById(k).value;const pid=v("w_
 // Standalone consultation invoice
 function consultInvForm(pid){openModal(`<div class="modal-h"><h3>Consultation Invoice</h3><button class="x" onclick="closeModal()">×</button></div>
  <div class="modal-b">
-  <div class="field"><label>Patient</label><select id="ci_pid">${DB.patients.map(p=>`<option value="${p.id}" ${pid===p.id?'selected':''}>${p.name}</option>`).join("")}</select></div>
+  <div class="field"><label>Patient</label><select id="ci_pid">${DB.patients.map(p=>`<option value="${p.id}" ${pid===p.id?'selected':''}>${esc(p.name)}</option>`).join("")}</select></div>
   <div class="grid2">
    <div class="field"><label>Consultation fee (₹)</label><input id="ci_fee" type="number" value="600"></div>
    <div class="field"><label>Date</label><input id="ci_date" type="date" value="${todayISO}"></div>
@@ -3841,7 +3841,7 @@ function consultInvForm(pid){openModal(`<div class="modal-h"><h3>Consultation In
   <div class="field"><label>Description</label><input id="ci_desc" value="Initial assessment & consultation"></div>
   <div class="grid2">
    <div class="field"><label>Payment mode</label><select id="ci_mode"><option>UPI</option><option>Cash</option><option>Card</option><option>Wallet (advance)</option><option>Bill later</option></select></div>
-   <div class="field"><label>Therapist</label><select id="ci_ther">${DB.staff.map(s=>`<option ${MYTHER===s.name?'selected':''}>${s.name}</option>`).join("")}</select></div>
+   <div class="field"><label>Therapist</label><select id="ci_ther">${DB.staff.map(s=>`<option ${MYTHER===s.name?'selected':''}>${esc(s.name)}</option>`).join("")}</select></div>
   </div>
   ${discField("ci")}
   <div class="muted" style="font-size:12.5px">This is a standalone consultation fee not linked to a session.</div>
@@ -3943,7 +3943,7 @@ function viewInvoice(id){const i=DB.invoices.find(x=>x.id===id);const p=pById(i.
    </div>
   </div>
   <div class="inv-h" style="justify-content:flex-end"><div style="text-align:right"><b>${i.id}</b><div class="muted">${fmtDate(i.date)}${i.time?' · '+i.time:''}${bName(i.branch)?' · '+bName(i.branch):''}</div><span class="tag ${statusTag(i.status)}">${i.status}</span></div></div>
-  <div style="margin:6px 0"><b>Bill to:</b> ${p.name} · ${p.phone}${p.addr?`<br><span class="muted">${p.addr}</span>`:""}</div>
+  <div style="margin:6px 0"><b>Bill to:</b> ${esc(p.name)} · ${esc(p.phone)}${p.addr?`<br><span class="muted">${p.addr}</span>`:""}</div>
   <div style="overflow-x:auto"><table style="min-width:420px"><thead><tr><th>Description</th><th style="white-space:nowrap">Qty</th><th class="tot" style="white-space:nowrap">Rate</th><th class="tot" style="white-space:nowrap">Amount</th></tr></thead><tbody>
   ${i.items.map(it=>`<tr><td>${it.d}${it.qty>1?`<div class="muted" style="font-size:11px">${inr(it.rate)} per session</div>`:""}</td><td>${it.qty}</td><td class="tot" style="white-space:nowrap">${inr(it.rate)}</td><td class="tot" style="white-space:nowrap">${inr(it.qty*it.rate)}</td></tr>`).join("")}</tbody></table></div>
   <div class="tot">${t.discount>0?`<div><span>Subtotal</span><span>${inr(t.sub)}</span></div><div><span>Discount${i.discount&&i.discount.type==="pct"?" ("+i.discount.value+"%)":""}</span><span>−${inr(t.discount)}</span></div>`:""}<div class="grand"><span>Total</span><span>${inr(t.total)}</span></div>${i.paid&&i.paid<t.total?`<div><span style="color:var(--ok)">Paid</span><span style="color:var(--ok)">${inr(i.paid)}</span></div><div><span style="color:var(--danger)">Balance due</span><span style="color:var(--danger)">${inr(t.total-i.paid)}</span></div>`:""}</div>
@@ -3992,7 +3992,7 @@ function buildInvoiceHTML(id){const i=DB.invoices.find(x=>x.id===id);if(!i)retur
    </div>
   </div>
   <div class="inv-h" style="justify-content:flex-end"><div style="text-align:right"><b>${i.id}</b><div class="muted">${fmtDate(i.date)}${i.time?' · '+i.time:''}${bName(i.branch)?' · '+bName(i.branch):''}</div><span class="tag ${statusTag(i.status)}">${i.status}</span></div></div>
-  <div style="margin:6px 0"><b>Bill to:</b> ${p.name} · ${p.phone}${p.addr?`<br><span class="muted">${p.addr}</span>`:""}</div>
+  <div style="margin:6px 0"><b>Bill to:</b> ${esc(p.name)} · ${esc(p.phone)}${p.addr?`<br><span class="muted">${p.addr}</span>`:""}</div>
   <div style="overflow-x:auto"><table style="min-width:420px"><thead><tr><th>Description</th><th style="white-space:nowrap">Qty</th><th class="tot" style="white-space:nowrap">Rate</th><th class="tot" style="white-space:nowrap">Amount</th></tr></thead><tbody>
   ${i.items.map(it=>`<tr><td>${it.d}${it.qty>1?`<div class="muted" style="font-size:11px">${inr(it.rate)} per session</div>`:""}</td><td>${it.qty}</td><td class="tot" style="white-space:nowrap">${inr(it.rate)}</td><td class="tot" style="white-space:nowrap">${inr(it.qty*it.rate)}</td></tr>`).join("")}</tbody></table></div>
   <div class="tot">${t.discount>0?`<div><span>Subtotal</span><span>${inr(t.sub)}</span></div><div><span>Discount${i.discount&&i.discount.type==="pct"?" ("+i.discount.value+"%)":""}</span><span>−${inr(t.discount)}</span></div>`:""}<div class="grand"><span>Total</span><span>${inr(t.total)}</span></div>${i.paid&&i.paid<t.total?`<div><span style="color:var(--ok)">Paid</span><span style="color:var(--ok)">${inr(i.paid)}</span></div><div><span style="color:var(--danger)">Balance due</span><span style="color:var(--danger)">${inr(t.total-i.paid)}</span></div>`:""}</div>
@@ -4081,7 +4081,7 @@ function statementData(id,from,to){
  dates.forEach(d=>{byDate[d].forEach(i=>{const t=invTotals(i);grand+=t.total;if(i.status==="Paid")paid+=t.total;});});
  return{p,invs,byDate,dates,grand,paid};}
 function patientStatementForm(id){const p=pById(id);
- openModal(`<div class="modal-h"><h3>Statement — ${p.name}</h3><button class="x" onclick="closeModal()">×</button></div>
+ openModal(`<div class="modal-h"><h3>Statement — ${esc(p.name)}</h3><button class="x" onclick="closeModal()">×</button></div>
  <div class="modal-b">
   <div class="muted" style="font-size:12.5px;margin-bottom:8px">Pick a date range to generate a day-wise statement of this patient's billed sessions.</div>
   <div class="grid2">
@@ -4250,7 +4250,7 @@ function printStatementNow(id,from,to){
    <div style="text-align:right;font-size:12px"><div style="font-weight:700">STATEMENT OF ACCOUNT</div><div>${fmtDate(from)} to ${fmtDate(to)}</div></div>
   </div>
   <div style="border:1px solid #e5e7eb;border-top:none;padding:16px 20px;border-radius:0 0 8px 8px">
-   <div style="font-weight:700;margin-bottom:8px">Bill to: ${p.name}${p.phone?" · "+p.phone:""}</div>
+   <div style="font-weight:700;margin-bottom:8px">Bill to: ${esc(p.name)}${p.phone?" · "+p.phone:""}</div>
    <hr style="border:none;border-top:1px solid #e5e7eb">
    ${rowsHTML}
    <hr style="border:none;border-top:1px solid #e5e7eb;margin-top:12px">
@@ -4263,7 +4263,7 @@ function printStatementNow(id,from,to){
 function invForm(){const svcs=(DB.billingServices||[]).slice().sort((a,b)=>a.d.localeCompare(b.d));
  openModal(`<div class="modal-h"><h3>New Invoice</h3><button class="x" onclick="closeModal()">×</button></div>
  <div class="modal-b">
-  <div class="field"><label>Patient</label><select id="i_pid">${DB.patients.map(p=>`<option value="${p.id}">${p.name}</option>`).join("")}</select></div>
+  <div class="field"><label>Patient</label><select id="i_pid">${DB.patients.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select></div>
   <div class="field">
    <label>Services</label>
    <div style="display:flex;gap:6px;margin-bottom:8px">
@@ -4584,7 +4584,7 @@ function attendanceForm(forDate){
   <div class="field"><label>Date</label><div style="display:flex;gap:6px;align-items:center"><input type="date" value="${date}" max="${todayISO}" style="flex:1" onchange="attendanceForm(this.value)"><button type="button" class="btn sm sec" onclick="attendanceForm(todayISO)">Today</button></div></div>
   ${list.map(s=>{const rec=getAttendance(s.id,date);const cur=rec?rec.status:"";
    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--line);gap:8px;flex-wrap:wrap">
-     <b style="font-size:13.5px">${s.name}</b>
+     <b style="font-size:13.5px">${esc(s.name)}</b>
      <div style="display:flex;gap:5px">
       ${["Present","Half-day","Leave"].map(st=>`<button type="button" class="btn sm ${cur===st?'':'sec'}" style="padding:4px 9px;font-size:11.5px" onclick="setAttendance('${s.id}','${date}','${st}');attendanceForm('${date}')">${st}</button>`).join("")}
      </div>
@@ -4600,7 +4600,7 @@ views.staff=()=>{const list=DB.staff.filter(s=>curBranch()==="all"||s.branch===c
  const daysSoFar=new Date(todayISO).getDate();
  return `<div class="panel"><div class="panel-h"><h3>Clinic Members</h3><div style="display:flex;gap:8px"><button class="btn sm sec" onclick="attendanceForm()">📅 Mark today's attendance</button><button class="btn" onclick="staffForm()">+ Add Member</button></div></div>
  <div class="panel-b flush"><table><thead><tr><th>Member</th><th>Role</th><th>Phone</th><th>Branch</th><th>Attendance</th><th>Leaves</th><th style="text-align:right">Salary</th>${canDo('staff.manage')?'<th style="text-align:right">Actions</th>':''}</tr></thead><tbody>
- ${list.map(s=>{const ma=monthAttendance(s.id,ym);const present=ma.marked?ma.present:s.present;const lv=ma.marked?ma.leave:s.leave;return `<tr><td><div class="pcell"><div class="avatar t">${initials(s.name)}</div><div class="nm">${s.name}</div></div></td><td><span class="tag ${s.role.includes('Senior')?'purple':s.role.includes('Physio')?'blue':'gray'}">${s.role}</span></td><td>${s.phone}</td><td>${bName(s.branch).replace('PhysioMind — ','')}</td><td><b style="color:var(--ok)">${present}</b> days</td><td>${lv}</td><td style="text-align:right"><b>${inr(s.salary)}</b></td>${canDo('staff.manage')?`<td style="text-align:right"><button class="btn sm sec" title="Edit" onclick="staffForm('${s.id}')">✏️ Edit</button> <button class="btn sm danger sec" onclick="delStaff('${s.id}')">🗑 Remove</button></td>`:''}</tr>`;}).join("")}
+ ${list.map(s=>{const ma=monthAttendance(s.id,ym);const present=ma.marked?ma.present:s.present;const lv=ma.marked?ma.leave:s.leave;return `<tr><td><div class="pcell"><div class="avatar t">${initials(s.name)}</div><div class="nm">${esc(s.name)}</div></div></td><td><span class="tag ${s.role.includes('Senior')?'purple':s.role.includes('Physio')?'blue':'gray'}">${s.role}</span></td><td>${s.phone}</td><td>${bName(s.branch).replace('PhysioMind — ','')}</td><td><b style="color:var(--ok)">${present}</b> days</td><td>${lv}</td><td style="text-align:right"><b>${inr(s.salary)}</b></td>${canDo('staff.manage')?`<td style="text-align:right"><button class="btn sm sec" title="Edit" onclick="staffForm('${s.id}')">✏️ Edit</button> <button class="btn sm danger sec" onclick="delStaff('${s.id}')">🗑 Remove</button></td>`:''}</tr>`;}).join("")}
  </tbody></table></div></div>
  <div class="panel" style="margin-top:14px"><div class="panel-h" style="flex-wrap:wrap;gap:8px"><h3>Attendance</h3>
    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
@@ -4612,12 +4612,12 @@ views.staff=()=>{const list=DB.staff.filter(s=>curBranch()==="all"||s.branch===c
  <div class="panel-b">
    ${_staffView==='monthly'?`
      <div class="muted" style="font-size:12.5px;margin-bottom:8px">Showing ${monthLabel}</div>
-     ${list.map(s=>{const ma=monthAttendance(s.id,ym);const present=ma.marked?ma.present:s.present;const lv=ma.marked?ma.leave:s.leave;const denom=ma.marked?daysSoFar:26;return `<div class="list-row"><div style="display:flex;justify-content:space-between"><b>${s.name}</b><span class="muted">${present}/${denom} present · ${lv} leave</span></div><div class="bar"><div style="width:${Math.min(100,Math.round(present/denom*100))}%;background:var(--ok)"></div></div></div>`;}).join("")}
+     ${list.map(s=>{const ma=monthAttendance(s.id,ym);const present=ma.marked?ma.present:s.present;const lv=ma.marked?ma.leave:s.leave;const denom=ma.marked?daysSoFar:26;return `<div class="list-row"><div style="display:flex;justify-content:space-between"><b>${esc(s.name)}</b><span class="muted">${present}/${denom} present · ${lv} leave</span></div><div class="bar"><div style="width:${Math.min(100,Math.round(present/denom*100))}%;background:var(--ok)"></div></div></div>`;}).join("")}
      <div class="muted" style="font-size:11.5px;margin-top:8px">Figures reflect actual daily marks for ${monthLabel} once you start using "Mark today's attendance"; until then they show the starting totals.</div>
    `:`
      <div class="muted" style="font-size:12.5px;margin-bottom:10px">Month-by-month breakdown for ${_staffYear}</div>
      ${list.map(s=>{const y=yearAttendance(s.id,_staffYear);return `<div style="margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--line)">
-       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><b>${s.name}</b><span class="muted" style="font-size:12px">${y.totalPresent} present · ${y.totalLeave} leave · ${y.totalMarked} days marked</span></div>
+       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><b>${esc(s.name)}</b><span class="muted" style="font-size:12px">${y.totalPresent} present · ${y.totalLeave} leave · ${y.totalMarked} days marked</span></div>
        <div style="display:grid;grid-template-columns:repeat(12,1fr);gap:3px">${y.months.map(m=>{const denom=Math.max(m.marked,1);const pct=m.marked?Math.round(m.present/denom*100):0;const bg=m.marked?(pct>=80?'var(--ok)':pct>=50?'#f59e0b':'#dc2626'):'#e5e7eb';return `<div title="${m.label} ${_staffYear}: ${m.present} present, ${m.leave} leave${m.marked?'':' (no data)'}" style="height:36px;background:${bg};border-radius:4px;display:flex;flex-direction:column;align-items:center;justify-content:center;color:${m.marked?'#fff':'var(--muted)'};font-size:9px;font-weight:600"><div>${m.label.slice(0,3)}</div><div style="font-size:10px">${m.marked?m.present:'–'}</div></div>`;}).join('')}</div>
      </div>`;}).join("")||'<div class="empty">No staff to show</div>'}
      <div class="muted" style="font-size:11.5px;margin-top:8px">Each cell shows one month. Colour: green = ≥80% attendance, amber = 50-79%, red = &lt;50%. Grey = no attendance marked yet for that month.</div>
@@ -4630,7 +4630,7 @@ function staffForm(id){
   <div class="field"><label>Name</label><input id="m_name" value="${s?(s.name||'').replace(/"/g,'&quot;'):''}"></div>
   <div class="grid2"><div class="field"><label>Role</label><select id="m_role">${["Senior Physiotherapist","Physiotherapist","Receptionist","Assistant"].map(r=>`<option ${s&&s.role===r?'selected':''}>${r}</option>`).join("")}</select></div>
    <div class="field"><label>Phone</label><input id="m_phone" value="${s?(s.phone||'').replace(/"/g,'&quot;'):''}"></div></div>
-  <div class="grid2"><div class="field"><label>Branch</label><select id="m_branch">${DB.branches.map(b=>`<option value="${b.id}" ${s&&s.branch===b.id?'selected':''}>${b.name}</option>`).join("")}</select></div>
+  <div class="grid2"><div class="field"><label>Branch</label><select id="m_branch">${DB.branches.map(b=>`<option value="${b.id}" ${s&&s.branch===b.id?'selected':''}>${esc(b.name)}</option>`).join("")}</select></div>
    <div class="field"><label>Monthly salary (₹)</label><input id="m_sal" type="number" value="${s?(s.salary||0):''}"></div></div>
   <div class="field"><label>Role-based access</label><select id="m_access">${[["admin","Full access (Admin)"],["therapist","Therapist (patients + notes)"],["reception","Reception (appointments + billing)"]].map(([val,label])=>`<option value="${val}" ${(s&&s.access?s.access===val:val==="admin")?'selected':''}>${label}</option>`).join("")}</select></div>
  </div>
@@ -4681,7 +4681,7 @@ async function delStaff(id){
 views.branches=()=>`<div class="panel"><div class="panel-h"><h3>Branches</h3><button class="btn" onclick="branchForm()">+ Add Branch</button></div>
  <div class="panel-b">
  ${DB.branches.map(b=>{const pts=DB.patients.filter(p=>p.branch===b.id).length;const st=DB.staff.filter(s=>s.branch===b.id).length;return `
-  <div class="panel" style="margin-bottom:13px;box-shadow:none"><div class="panel-h"><div><h3>${b.name}</h3><div class="mt muted">${b.address}</div></div><span class="tag teal">${pts} patients</span></div>
+  <div class="panel" style="margin-bottom:13px;box-shadow:none"><div class="panel-h"><div><h3>${esc(b.name)}</h3><div class="mt muted">${b.address}</div></div><span class="tag teal">${pts} patients</span></div>
    <div class="panel-b"><div class="kpi-mini"><div><b>${st}</b><span>Staff</span></div><div><b>${pts}</b><span>Patients</span></div><div><b>${b.phone}</b><span>Phone</span></div></div></div></div>`;}).join("")}
  </div></div>`;
 function branchForm(){openModal(`<div class="modal-h"><h3>Add Branch</h3><button class="x" onclick="closeModal()">×</button></div>
@@ -4783,7 +4783,7 @@ views.reminders=()=>{
   ${upcoming.length?upcoming.map(a=>{const p=pById(a.pid);const recId="a_"+a.id;const data={name:p.name,date:fmtDate(a.date),time:a.time,therapist:a.therapist,phone:p.phone};const msg=tmplMsgFor(recId,"Appointment",data)||apptMsg(p,fmtAppt(a));return `<div class="reminder"><div class="r-ico wa">💬</div>
    <div class="r-body">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
-     <b>${p.name} <span class="tag blue" style="margin-left:5px">Appointment</span></b>
+     <b>${esc(p.name)} <span class="tag blue" style="margin-left:5px">Appointment</span></b>
      <a href="tel:${(p.phone||'').replace(/\D/g,'')}" class="btn sm sec" style="text-decoration:none;padding:4px 10px;font-size:12px">📞 ${p.phone||'Call'}</a>
     </div>
     <div class="muted" style="font-size:12px;margin:2px 0">${fmtDate(a.date)} at ${a.time} · ${a.therapist} · <span class="tag ${apptStatusCls(a)}">${apptStatusLabel(a)}</span></div>
@@ -4804,8 +4804,8 @@ views.reminders=()=>{
   ${dues.length?dues.map(i=>{const p=pById(i.pid);const amt=invTotals(i).total;const recId="p_"+i.id;const data={name:p.name,phone:p.phone,due:inr(amt),invoiceId:i.id,amount:inr(amt),date:fmtDate(i.date),paid:i.paid?inr(i.paid):"",remaining:i.paid?inr(amt-i.paid):""};const msg=tmplMsgFor(recId,"Payment",data)||payMsg(p,inr(amt)+" pending for "+i.id);return `<div class="reminder"><div class="r-ico wa">💬</div>
    <div class="r-body">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
-     <b>${p.name} <span class="tag amber" style="margin-left:5px">${i.status}</span></b>
-     <span class="muted" style="font-size:12px"><a href="tel:${(p.phone||'').replace(/\D/g,'')}" style="color:var(--accent);text-decoration:none">📞 ${p.phone}</a></span>
+     <b>${esc(p.name)} <span class="tag amber" style="margin-left:5px">${i.status}</span></b>
+     <span class="muted" style="font-size:12px"><a href="tel:${(p.phone||'').replace(/\D/g,'')}" style="color:var(--accent);text-decoration:none">📞 ${esc(p.phone)}</a></span>
     </div>
     <div class="muted" style="font-size:12px;margin:2px 0">${i.id} · ${fmtDate(i.date)} · <b style="color:var(--danger)">${inr(amt)}</b>${i.paid?' · Paid: '+inr(i.paid)+', Balance: '+inr(amt-i.paid):''}</div>
     <div>${tmplSelectHTML(recId,"Payment")}</div>
@@ -4825,8 +4825,8 @@ views.reminders=()=>{
   ${reschedList.length?reschedList.map(a=>{const p=pById(a.pid);const isNoShow=a.status==="Pending"&&a.date<todayISO;const recId="r_"+a.id;const data={name:p.name,date:fmtDate(a.date),time:a.time,therapist:a.therapist,phone:p.phone};const fallback=isNoShow?`Hi ${p.name.split(' ')[0]}, we missed you at your physio appointment on ${fmtDate(a.date)} at ${a.time} 😔. Please call us to reschedule — Team ${clinic}`:`Hi ${p.name.split(' ')[0]}, your appointment on ${fmtDate(a.date)} was cancelled. Would you like to book a new slot at ${clinic}? Call us anytime — Team ${clinic} 🙏`;const msg=tmplMsgFor(recId,"Reschedule",data)||fallback;return `<div class="reminder"><div class="r-ico wa">💬</div>
    <div class="r-body">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
-     <b>${p.name} <span class="tag ${isNoShow?'red':'gray'}" style="margin-left:5px">${isNoShow?'No-show':'Cancelled'}</span></b>
-     <span class="muted" style="font-size:12px"><a href="tel:${(p.phone||'').replace(/\D/g,'')}" style="color:var(--accent);text-decoration:none">📞 ${p.phone}</a></span>
+     <b>${esc(p.name)} <span class="tag ${isNoShow?'red':'gray'}" style="margin-left:5px">${isNoShow?'No-show':'Cancelled'}</span></b>
+     <span class="muted" style="font-size:12px"><a href="tel:${(p.phone||'').replace(/\D/g,'')}" style="color:var(--accent);text-decoration:none">📞 ${esc(p.phone)}</a></span>
     </div>
     <div class="muted" style="font-size:12px;margin:2px 0">${fmtDate(a.date)} at ${a.time} · ${a.therapist}</div>
     <div>${tmplSelectHTML(recId,"Reschedule")}</div>
@@ -4850,8 +4850,8 @@ views.reminders=()=>{
    return `<div class="reminder"><div class="r-ico wa">💬</div>
    <div class="r-body">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
-     <b>${p.name} <span class="tag ${status.tag}" style="margin-left:5px">${status.label}</span></b>
-     <span class="muted" style="font-size:12px"><a href="tel:${(p.phone||'').replace(/\D/g,'')}" style="color:var(--accent);text-decoration:none">📞 ${p.phone}</a></span>
+     <b>${esc(p.name)} <span class="tag ${status.tag}" style="margin-left:5px">${status.label}</span></b>
+     <span class="muted" style="font-size:12px"><a href="tel:${(p.phone||'').replace(/\D/g,'')}" style="color:var(--accent);text-decoration:none">📞 ${esc(p.phone)}</a></span>
     </div>
     <div class="muted" style="font-size:12px;margin:2px 0">${k.pkg||k.name||'Package'} · ${k.used||0}/${k.total||0} used${bal>0?' · <b style="color:var(--danger)">'+inr(bal)+' due</b>':''}${daysLeft!=null?' · expires '+fmtDate(k.expires):''}</div>
     <div>${tmplSelectHTML(recId,"Package")}</div>
@@ -4906,7 +4906,7 @@ views.reminders=()=>{
    const dayItems=sentByDate[d];
    return `<div style="margin:10px 0 4px"><div style="font-size:11.5px;font-weight:700;color:var(--muted);padding:5px 0;border-bottom:1px solid var(--line);margin-bottom:4px">${d!=="other"?fmtDate(d)+" — "+dayItems.length+" sent":"Unknown date"}</div>
     ${dayItems.map(r=>{const p=pById(r.pid);return `<div class="list-row" style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:7px 0">
-     <div style="flex:1;min-width:0"><b style="font-size:13px">${p.name}</b> <span class="tag ${r.kind==="Payment"?"amber":r.kind==="Reschedule"?"gray":"blue"}" style="font-size:10px;margin-left:4px">${r.kind}</span><div class="muted" style="font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.appt||r.when||""}</div></div>
+     <div style="flex:1;min-width:0"><b style="font-size:13px">${esc(p.name)}</b> <span class="tag ${r.kind==="Payment"?"amber":r.kind==="Reschedule"?"gray":"blue"}" style="font-size:10px;margin-left:4px">${r.kind}</span><div class="muted" style="font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.appt||r.when||""}</div></div>
      <a href="tel:${(p.phone||"").replace(/\D/g,"")}" class="btn sm sec" style="text-decoration:none;padding:4px 10px;font-size:12px;white-space:nowrap;flex-shrink:0">📞 Call</a>
      <button class="btn sm danger sec" style="padding:4px 10px;font-size:12px;flex-shrink:0" onclick="deleteSentReminder('${r.id}')">🗑</button>
     </div>`;
@@ -5210,7 +5210,7 @@ views.assessment=()=>{
   const all=(DB.assessments||[]).filter(c=>{const p=pById(c.pid);return p&&inBranch(p);}).filter(c=>!MYTHER||c.therapist===MYTHER).sort((a,b)=>(b.date||"").localeCompare(a.date||""));
   const filtered=all.filter(c=>{const p=pById(c.pid);if(!p)return false;const txt=((p.name||"")+" "+(c.dx||"")+" "+(c.therapist||"")).toLowerCase();return (!_assessQ||txt.includes(_assessQ))&&(!_assessTher||c.therapist===_assessTher);});
   const isFiltering=!!(_assessQ||_assessTher);
-  const rowHTML=c=>{const p=pById(c.pid);return `<tr class="clk" onclick="assessView('${c.id}')"><td>${fmtDate(c.date)}</td><td><div class="pcell"><div class="avatar">${initials(p.name)}</div><div class="nm">${p.name}</div></div></td><td>${c.dx||'—'}</td><td>${c.therapist}</td><td style="text-align:right"><button class="btn sm sec" onclick="event.stopPropagation();printRx('${c.id}','assessment')">🖨 Rx</button></td></tr>`;};
+  const rowHTML=c=>{const p=pById(c.pid);return `<tr class="clk" onclick="assessView('${c.id}')"><td>${fmtDate(c.date)}</td><td><div class="pcell"><div class="avatar">${initials(p.name)}</div><div class="nm">${esc(p.name)}</div></div></td><td>${c.dx||'—'}</td><td>${c.therapist}</td><td style="text-align:right"><button class="btn sm sec" onclick="event.stopPropagation();printRx('${c.id}','assessment')">🖨 Rx</button></td></tr>`;};
   let bodyHTML;
   if(isFiltering){
     const pg2=filtered.slice(_assessPage*PG,(_assessPage+1)*PG);
@@ -5419,8 +5419,8 @@ function assessForm(_,pid){
   window._aForm=freshA;
   openModal(`<div class="modal-h"><h3>New Assessment</h3><button class="x" onclick="closeModal()">×</button></div>
  <div class="modal-b">
-  <div class="field"><label>Patient</label><select id="ca_pid" onchange="window._aForm.pid=this.value">${DB.patients.map(p=>`<option value="${p.id}" ${pid===p.id?'selected':''}>${p.name}</option>`).join("")}</select></div>
-  <div class="field"><label>Therapist</label><select id="ca_ther" onchange="window._aForm.therapist=this.value">${DB.staff.map(s=>`<option ${(MYTHER||"")===s.name?'selected':''}>${s.name}</option>`).join("")}</select></div>
+  <div class="field"><label>Patient</label><select id="ca_pid" onchange="window._aForm.pid=this.value">${DB.patients.map(p=>`<option value="${p.id}" ${pid===p.id?'selected':''}>${esc(p.name)}</option>`).join("")}</select></div>
+  <div class="field"><label>Therapist</label><select id="ca_ther" onchange="window._aForm.therapist=this.value">${DB.staff.map(s=>`<option ${(MYTHER||"")===s.name?'selected':''}>${esc(s.name)}</option>`).join("")}</select></div>
   <label style="font-weight:600;font-size:12.5px;color:#3a4456">Assessment method</label>
   <div class="tabs" id="catabs" style="margin:6px 0 14px">
     <button class="active" data-m="template" onclick="caMode('template')">📝 Digital template</button>
@@ -5687,7 +5687,7 @@ function assessDocHTML(id){
       <div class="adoc-patient">
         <div class="adoc-av">${ini}</div>
         <div>
-          <div class="adoc-name">${p.name}</div>
+          <div class="adoc-name">${esc(p.name)}</div>
           <div class="adoc-sub">${[p.age&&p.age+"yrs",p.gender,p.phone,p.occupation].filter(Boolean).join(" · ")}</div>
         </div>
       </div>
@@ -5872,7 +5872,7 @@ function buildPDFHTML(id){
     <div style="display:flex;align-items:center;gap:12px">
       <div style="width:42px;height:42px;border-radius:50%;background:#2563eb;color:#fff;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;flex-shrink:0">${ini}</div>
       <div>
-        <div style="font-size:18px;font-weight:700;color:#0f172a;line-height:1.2">${p.name}</div>
+        <div style="font-size:18px;font-weight:700;color:#0f172a;line-height:1.2">${esc(p.name)}</div>
         <div style="font-size:10px;color:#64748b;margin-top:2px">${[p.age&&p.age+' yrs',p.gender,p.phone,p.occupation].filter(Boolean).join(' · ')}</div>
       </div>
     </div>
@@ -6161,8 +6161,8 @@ function assessEdit(id){
   const pid=existing.pid;
   openModal(`<div class="modal-h"><h3>Edit Assessment</h3><button class="x" onclick="closeModal()">×</button></div>
  <div class="modal-b">
-  <div class="field"><label>Patient</label><select id="ca_pid" onchange="window._aForm.pid=this.value">${DB.patients.map(p=>`<option value="${p.id}" ${pid===p.id?'selected':''}>${p.name}</option>`).join("")}</select></div>
-  <div class="field"><label>Therapist</label><select id="ca_ther" onchange="window._aForm.therapist=this.value">${DB.staff.map(s=>`<option ${existing.therapist===s.name?'selected':''}>${s.name}</option>`).join("")}</select></div>
+  <div class="field"><label>Patient</label><select id="ca_pid" onchange="window._aForm.pid=this.value">${DB.patients.map(p=>`<option value="${p.id}" ${pid===p.id?'selected':''}>${esc(p.name)}</option>`).join("")}</select></div>
+  <div class="field"><label>Therapist</label><select id="ca_ther" onchange="window._aForm.therapist=this.value">${DB.staff.map(s=>`<option ${existing.therapist===s.name?'selected':''}>${esc(s.name)}</option>`).join("")}</select></div>
   <label style="font-weight:600;font-size:12.5px;color:#3a4456">Assessment method</label>
   <div class="tabs" id="catabs" style="margin:6px 0 14px">
     <button class="${existing.mode==='template'?'active':''}" data-m="template" onclick="caMode('template')">📝 Digital template</button>
@@ -6237,7 +6237,7 @@ printRx=function(id,src){
     openModal(`<div class="modal-h"><h3>Prescription</h3><button class="x" onclick="closeModal()">×</button></div>
  <div class="modal-b"><div class="inv">
   <div class="inv-h"><div><h2>${DB.settings.clinic}</h2><div class="muted">${DB.branches[0].address}</div><div class="muted">${c.therapist} · Physiotherapist</div></div><div style="text-align:right"><b>Rx Prescription</b><div class="muted">${fmtDate(c.date)}</div></div></div>
-  <div style="display:flex;justify-content:space-between;margin-bottom:10px"><b>${p.name}</b><span class="muted">${p.age}y / ${p.gender} · ${p.phone}</span></div>
+  <div style="display:flex;justify-content:space-between;margin-bottom:10px"><b>${esc(p.name)}</b><span class="muted">${p.age}y / ${p.gender} · ${esc(p.phone)}</span></div>
   <b class="muted">Diagnosis:</b> ${c.dx||'—'}<hr class="sep">
   <b style="font-size:18px">Rx</b>
   <div style="margin:10px 0 10px 20px">${(c.rx||[]).map((r,i)=>`<div style="padding:5px 0">${i+1}. ${r}</div>`).join("")||'<div class=muted>No medication</div>'}</div>
@@ -6252,7 +6252,7 @@ printRx=function(id,src){
 
 /* ══════════════════════════════════════════════════════ */
 
-function fillBranches(){const sel=document.getElementById("branchSel");const cur=sel.value;sel.innerHTML='<option value="all">🏥 All Branches</option>'+DB.branches.map(b=>`<option value="${b.id}">🏥 ${b.name}</option>`).join("");sel.value=cur||"b1";}
+function fillBranches(){const sel=document.getElementById("branchSel");const cur=sel.value;sel.innerHTML='<option value="all">🏥 All Branches</option>'+DB.branches.map(b=>`<option value="${b.id}">🏥 ${esc(b.name)}</option>`).join("");sel.value=cur||"b1";}
 // (Real login/logout live earlier in the script as quickLogin/afterLogin/sbLogout — fillBranches()
 // is called from afterLogin() once DB has actually loaded, not here at page-load time.)
 
@@ -6262,7 +6262,7 @@ function renderAssessTable(){
   const all=(DB.assessments||[]).filter(c=>{const p=pById(c.pid);return p&&inBranch(p);}).filter(c=>!MYTHER||c.therapist===MYTHER).sort((a,b)=>(b.date||"").localeCompare(a.date||""));
   const filtered=all.filter(c=>{const p=pById(c.pid);if(!p)return false;const txt=((p.name||"")+" "+(c.dx||"")+" "+(c.therapist||"")).toLowerCase();return (!_assessQ||txt.includes(_assessQ))&&(!_assessTher||c.therapist===_assessTher);});
   const pg2=filtered.slice(_assessPage*PG,(_assessPage+1)*PG);
-  const rows=pg2.map(c=>{const p=pById(c.pid);return `<tr class="clk" onclick="assessView('${c.id}')"><td>${fmtDate(c.date)}</td><td><div class="pcell"><div class="avatar">${initials(p.name)}</div><div class="nm">${p.name}</div></div></td><td>${c.dx||'—'}</td><td>${c.therapist}</td><td style="text-align:right"><button class="btn sm sec" onclick="event.stopPropagation();printRx('${c.id}','assessment')">🖨 Rx</button></td></tr>`;}).join("")||'<tr><td colspan=5 class=empty>No assessments found</td></tr>';
+  const rows=pg2.map(c=>{const p=pById(c.pid);return `<tr class="clk" onclick="assessView('${c.id}')"><td>${fmtDate(c.date)}</td><td><div class="pcell"><div class="avatar">${initials(p.name)}</div><div class="nm">${esc(p.name)}</div></div></td><td>${c.dx||'—'}</td><td>${c.therapist}</td><td style="text-align:right"><button class="btn sm sec" onclick="event.stopPropagation();printRx('${c.id}','assessment')">🖨 Rx</button></td></tr>`;}).join("")||'<tr><td colspan=5 class=empty>No assessments found</td></tr>';
   const tbody=document.getElementById("assessTbody");
   if(tbody){tbody.innerHTML=rows;const pgEl=document.getElementById("assessPgBar");if(pgEl)pgEl.innerHTML=pgBar(filtered.length,_assessPage,'setAssessPage');}
 }
