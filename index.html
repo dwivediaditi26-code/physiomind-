@@ -2716,10 +2716,36 @@ function patientForm(id){const p=id?pById(id):{name:"",dob:"",gender:"M",phone:"
    <div class="field"><label>Branch</label><select id="f_branch">${DB.branches.map(b=>`<option value="${b.id}" ${p.branch===b.id?'selected':''}>${esc(b.name)}</option>`).join("")}</select></div></div>
  </div>
  <div class="modal-f"><button class="btn sec" onclick="closeModal()">Cancel</button><button class="btn" onclick="savePatient('${id||''}')">Save</button></div>`);}
-function savePatient(id){const v=k=>{const el=document.getElementById(k);return el?el.value:"";};const dob=v("f_dob");const obj={name:v("f_name"),dob,age:ageFromDob(dob),gender:v("f_gender"),phone:v("f_phone"),condition:v("f_cond"),email:v("f_email"),occ:v("f_occ"),addr:v("f_addr"),emName:v("f_emname"),emPhone:v("f_emphone"),refDr:v("f_refdr"),therapist:v("f_ther"),branch:v("f_branch")};
+async function savePatient(id){const v=k=>{const el=document.getElementById(k);return el?el.value:"";};const dob=v("f_dob");const obj={name:v("f_name"),dob,age:ageFromDob(dob),gender:v("f_gender"),phone:v("f_phone"),condition:v("f_cond"),email:v("f_email"),occ:v("f_occ"),addr:v("f_addr"),emName:v("f_emname"),emPhone:v("f_emphone"),refDr:v("f_refdr"),therapist:v("f_ther"),branch:v("f_branch")};
  if(!obj.name){alert("Name required");return;}
  if(!dob){alert("Date of birth required — it is the patient's ID");return;}
- if(id){Object.assign(pById(id),obj);logAudit("Patient","Edited profile",obj.name||"");Patients.update(id,obj);}else{var _np={id:uid("p"),since:todayISO,sinceTime:nowTime(),wallet:0,docs:[],...obj};DB.patients.push(_np);logAudit("Patient Added","New patient",_np.name||"");Patients.create(_np);}save();closeModal();render();}
+ // Patients.create()/update() write straight to Supabase and were previously fired without
+ // awaiting the result — the modal closed and the patient showed up immediately either way
+ // (optimistic local push), so a failed write (permissions, dropped connection, etc.) was
+ // invisible: the patient looked saved until the next reload silently dropped it, since it was
+ // never actually in the database. Now we wait for the real result and undo the optimistic
+ // change on failure instead of pretending it worked.
+ const btn=document.querySelector('#modal .modal-f .btn:not(.sec)');
+ if(btn){btn.disabled=true;btn.textContent='Saving…';}
+ const fail=()=>{if(btn){btn.disabled=false;btn.textContent='Save';}render();};
+ let prev=null,_np=null;
+ if(id){prev=Object.assign({},pById(id));Object.assign(pById(id),obj);}
+ else{_np={id:uid("p"),since:todayISO,sinceTime:nowTime(),wallet:0,docs:[],...obj};DB.patients.push(_np);}
+ let saved;
+ try{
+  saved=id?await Patients.update(id,obj):await Patients.create(_np);
+ }catch(e){
+  reportError('savePatient',e);
+  toast('⚠️ Could not save patient — check your connection and try again.',4000);
+  saved=null;
+ }
+ if(!saved){
+  if(id)Object.assign(pById(id),prev);else DB.patients=DB.patients.filter(p=>p.id!==_np.id);
+  fail();
+  return;
+ }
+ logAudit(id?"Patient":"Patient Added",id?"Edited profile":"New patient",obj.name||"");
+ save();closeModal();render();}
 
 /* APPOINTMENTS */
 const _therPalette=["#2563eb","#0d9488","#7c3aed","#d97706","#dc2626","#059669","#db2777","#4f46e5","#0891b2","#65a30d"];
