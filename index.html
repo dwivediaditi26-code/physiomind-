@@ -1037,8 +1037,13 @@ function sbSubscribeRealtime(){
   if(!payload.new||!payload.new.data)return;
   _lastSyncedAt=payload.new.updated_at||_lastSyncedAt;
   if(_sbSaving){return;} // our own save is about to echo back with the same data — skip, no-op
-  if(ov&&ov.classList.contains('show')){_pendingDB=payload.new.data;return;} // don't yank data out from under an open form
-  DB=payload.new.data;render();renderActiveBar();
+  // Merge rather than replace: most of what used to live in this blob (patients, appointments,
+  // staff, invoices, etc.) has since moved to its own RLS'd table and is loaded separately — it's
+  // no longer present in payload.new.data at all. Replacing DB outright with the blob used to wipe
+  // all of that out from under every open page every time this fired, crashing whatever view
+  // referenced it next (`Cannot read properties of undefined (reading 'map')` etc.).
+  if(ov&&ov.classList.contains('show')){_pendingDB=Object.assign({},DB,payload.new.data);return;} // don't yank data out from under an open form
+  Object.assign(DB,payload.new.data);render();renderActiveBar();
  }).subscribe();
  // Safety net: realtime sockets can drop silently (device sleep, flaky wifi, a dashboard
  // publication that isn't configured). Poll every 20s as a backstop so a stale screen never
@@ -1052,8 +1057,9 @@ async function sbPollFallback(){
   if(error||!data)return;
   if(_lastSyncedAt&&data.updated_at===_lastSyncedAt)return;
   _lastSyncedAt=data.updated_at;
-  if(ov&&ov.classList.contains('show')){_pendingDB=data.data;return;}
-  DB=data.data;render();renderActiveBar();
+  // Same merge-not-replace fix as the realtime handler above — see its comment.
+  if(ov&&ov.classList.contains('show')){_pendingDB=Object.assign({},DB,data.data);return;}
+  Object.assign(DB,data.data);render();renderActiveBar();
  }catch(e){/* transient network hiccup — next poll will catch up */}
 }
 // ── Patients & Branches DAL ──────────────────────────────────────────
