@@ -2166,7 +2166,18 @@ function render(){
   const focusedId=(active&&active.id)?active.id:null;
   const selStart=(active&&typeof active.selectionStart==='number')?active.selectionStart:null;
   const selEnd=(active&&typeof active.selectionEnd==='number')?active.selectionEnd:null;
-  document.getElementById("view").innerHTML=views[current]();
+  // A crash while building one page's HTML (bad/missing data on a specific record, usually)
+  // used to throw all the way out of go() — which left the nav button highlighted as active
+  // but the old page still showing (looks stuck), and skipped whatever ran after go() in the
+  // caller (toggleNav(false), the mobile "more" drawer's bnav()/closeMoreDrawer(), etc.), so
+  // the drawer/sidebar was left open with no way to close it. Contain the failure to this one
+  // render instead, so navigation itself always completes.
+  try{
+    document.getElementById("view").innerHTML=views[current]();
+  }catch(e){
+    reportError('render:'+current,e);
+    document.getElementById("view").innerHTML='<div class="panel"><div class="panel-b" style="padding:32px;text-align:center"><div style="font-size:32px;margin-bottom:8px">⚠️</div><b>Couldn\'t load this page</b><div class="muted" style="margin:8px 0 16px">Something went wrong showing this page. Try again — if it keeps happening, let support know.</div><button class="btn" onclick="render()">Try again</button></div></div>';
+  }
   renderActiveBar();
   if(focusedId){
     const el=document.getElementById(focusedId);
